@@ -238,7 +238,33 @@ DROP POLICY IF EXISTS "Public Full Access" ON public.mfg_board;
 CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH CHECK (true);
 `;
 
+    const getTodayStr = () => {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const getOffsetDateStr = (baseDateStr, offsetDays) => {
+      const d = new Date(baseDateStr);
+      d.setDate(d.getDate() + offsetDays);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
     function App() {
+      // Date State for Pre-scheduling
+      const todayStr = useMemo(() => getTodayStr(), []);
+      const [selectedDate, setSelectedDate] = useState(todayStr);
+
+      const [schedulesMap, setSchedulesMap] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_schedules_map_v1");
+        return saved ? JSON.parse(saved) : {};
+      });
+
       // Supabase State
       const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("mfg_supabase_url") || DEFAULT_SUPABASE_URL || "");
       const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem("mfg_supabase_key") || DEFAULT_SUPABASE_KEY || "");
@@ -365,6 +391,27 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
       }, [machines, machineTypes, currentShift, mStatusOptions, matStatusOptions, skillGroups, attendanceMap]);
 
+      // Sync active states into schedulesMap when data changes
+      useEffect(() => {
+        setSchedulesMap(prev => {
+          const existing = prev[selectedDate];
+          if (
+            existing &&
+            JSON.stringify(existing.machines) === JSON.stringify(machines) &&
+            existing.currentShift === currentShift &&
+            JSON.stringify(existing.attendanceMap) === JSON.stringify(attendanceMap)
+          ) {
+            return prev;
+          }
+          const nextMap = {
+            ...prev,
+            [selectedDate]: { machines, currentShift, attendanceMap }
+          };
+          localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(nextMap));
+          return nextMap;
+        });
+      }, [selectedDate, machines, currentShift, attendanceMap]);
+
       // Initialize Supabase Client & Realtime Subscription
       useEffect(() => {
         if (!supabaseUrl || !supabaseKey || !window.supabase) {
@@ -381,13 +428,23 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             const { data, error } = await client.from('mfg_board').select('*').eq('id', 'global_state').single();
             if (data && data.data) {
               const state = data.data;
-              if (state.machines) setMachines(state.machines);
-              if (state.currentShift) setCurrentShift(state.currentShift);
+              if (state.schedulesMap) {
+                setSchedulesMap(state.schedulesMap);
+                const curDateSchedule = state.schedulesMap[selectedDate];
+                if (curDateSchedule) {
+                  if (curDateSchedule.machines) setMachines(curDateSchedule.machines);
+                  if (curDateSchedule.currentShift) setCurrentShift(curDateSchedule.currentShift);
+                  if (curDateSchedule.attendanceMap) setAttendanceMap(curDateSchedule.attendanceMap);
+                }
+              } else {
+                if (state.machines) setMachines(state.machines);
+                if (state.currentShift) setCurrentShift(state.currentShift);
+                if (state.attendanceMap) setAttendanceMap(state.attendanceMap);
+              }
               if (state.machineTypes) setMachineTypes(state.machineTypes);
               if (state.mStatusOptions) setMStatusOptions(state.mStatusOptions);
               if (state.matStatusOptions) setMatStatusOptions(state.matStatusOptions);
               if (state.skillGroups) setSkillGroups(state.skillGroups);
-              if (state.attendanceMap) setAttendanceMap(state.attendanceMap);
             }
             setSupabaseConnected(true);
           };
@@ -400,13 +457,23 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             .on('postgres_changes', { event: '*', schema: 'public', table: 'mfg_board' }, (payload) => {
               if (payload.new && payload.new.id === 'global_state' && payload.new.data) {
                 const state = payload.new.data;
-                if (state.machines) setMachines(state.machines);
-                if (state.currentShift) setCurrentShift(state.currentShift);
+                if (state.schedulesMap) {
+                  setSchedulesMap(state.schedulesMap);
+                  const curDateSchedule = state.schedulesMap[selectedDate];
+                  if (curDateSchedule) {
+                    if (curDateSchedule.machines) setMachines(curDateSchedule.machines);
+                    if (curDateSchedule.currentShift) setCurrentShift(curDateSchedule.currentShift);
+                    if (curDateSchedule.attendanceMap) setAttendanceMap(curDateSchedule.attendanceMap);
+                  }
+                } else {
+                  if (state.machines) setMachines(state.machines);
+                  if (state.currentShift) setCurrentShift(state.currentShift);
+                  if (state.attendanceMap) setAttendanceMap(state.attendanceMap);
+                }
                 if (state.machineTypes) setMachineTypes(state.machineTypes);
                 if (state.mStatusOptions) setMStatusOptions(state.mStatusOptions);
                 if (state.matStatusOptions) setMatStatusOptions(state.matStatusOptions);
                 if (state.skillGroups) setSkillGroups(state.skillGroups);
-                if (state.attendanceMap) setAttendanceMap(state.attendanceMap);
               }
             })
             .subscribe();
@@ -418,13 +485,17 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           console.error("Supabase connection error:", err);
           setSupabaseConnected(false);
         }
-      }, [supabaseUrl, supabaseKey]);
+      }, [supabaseUrl, supabaseKey, selectedDate]);
 
       // Helper to Push Full State to Supabase
       const pushToSupabase = async (overrideState = {}) => {
         if (!supabaseRef.current || !supabaseConnected) return;
 
         const payload = {
+          schedulesMap: {
+            ...schedulesMap,
+            [selectedDate]: { machines, currentShift, attendanceMap }
+          },
           machines,
           currentShift,
           machineTypes,
@@ -444,6 +515,59 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         } catch (err) {
           console.error("Failed to push state to Supabase:", err);
         }
+      };
+
+      const handleDateChange = (targetDate) => {
+        if (!targetDate || targetDate === selectedDate) return;
+
+        setSchedulesMap(prevMap => {
+          const currentSnap = { machines, currentShift, attendanceMap };
+          const updatedMap = { ...prevMap, [selectedDate]: currentSnap };
+
+          // Load target date schedule if exists, else init default slate
+          const targetData = updatedMap[targetDate];
+          if (targetData) {
+            setMachines(targetData.machines || DEFAULT_MACHINES);
+            setCurrentShift(targetData.currentShift || "S4");
+            setAttendanceMap(targetData.attendanceMap || {});
+          } else {
+            // New pre-schedule date setup
+            setMachines(DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" })));
+            setCurrentShift("S4");
+            setAttendanceMap({});
+          }
+
+          return updatedMap;
+        });
+
+        setSelectedDate(targetDate);
+        showNotice(`已切換看板日期至 [${targetDate}]`, "info");
+      };
+
+      const handleCopyScheduleFromToday = () => {
+        if (selectedDate === todayStr) {
+          showNotice("目前已是在今日排班！", "info");
+          return;
+        }
+        const todayData = schedulesMap[todayStr] || { machines, currentShift, attendanceMap };
+        const copiedMachines = JSON.parse(JSON.stringify(todayData.machines || machines));
+        const copiedShift = todayData.currentShift || currentShift;
+        const copiedAttendance = JSON.parse(JSON.stringify(todayData.attendanceMap || attendanceMap));
+
+        setMachines(copiedMachines);
+        setCurrentShift(copiedShift);
+        setAttendanceMap(copiedAttendance);
+
+        setSchedulesMap(prev => {
+          const updated = {
+            ...prev,
+            [selectedDate]: { machines: copiedMachines, currentShift: copiedShift, attendanceMap: copiedAttendance }
+          };
+          pushToSupabase({ schedulesMap: updated });
+          return updated;
+        });
+
+        showNotice(`已將今日 (${todayStr}) 排班完整複製至 [${selectedDate}]！`, "success");
       };
 
       const showNotice = (text, type = "info") => {
@@ -885,7 +1009,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       };
 
       const generateReportText = () => {
-        let text = `【製造管理看板 - 當前現場排班與機況概況】\n`;
+        let text = `【製造管理看板 - 現場排班與機況概況】\n`;
+        text += `排班日期：${selectedDate} (${selectedDate === todayStr ? '今日' : selectedDate > todayStr ? '未來預排' : '歷史紀錄'})\n`;
         text += `產生時間：${currentTime}\n`;
         text += `========================================\n`;
         machines.forEach((m, idx) => {
@@ -1151,6 +1276,75 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           {/* Main Dashboard Layout */}
           <main className="max-w-7xl mx-auto w-full p-4 flex-1 flex flex-col gap-4">
             
+            {/* Date Selector & Pre-scheduling Bar */}
+            <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-3 shadow">
+              <div className="flex items-center space-x-2 w-full sm:w-auto overflow-x-auto">
+                <span className="text-xs font-bold text-slate-300 whitespace-nowrap flex items-center gap-1">
+                  📅 排班日期:
+                </span>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={e => handleDateChange(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded-md focus:outline-none focus:border-blue-500 font-mono"
+                />
+                <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => handleDateChange(todayStr)}
+                    className={`px-2.5 py-1 rounded text-xs font-bold transition whitespace-nowrap ${
+                      selectedDate === todayStr
+                        ? "bg-blue-600 text-white shadow-md"
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                    }`}
+                  >
+                    今天
+                  </button>
+                  <button
+                    onClick={() => handleDateChange(getOffsetDateStr(todayStr, 1))}
+                    className={`px-2.5 py-1 rounded text-xs font-bold transition whitespace-nowrap ${
+                      selectedDate === getOffsetDateStr(todayStr, 1)
+                        ? "bg-blue-600 text-white shadow-md"
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                    }`}
+                  >
+                    明天
+                  </button>
+                  <button
+                    onClick={() => handleDateChange(getOffsetDateStr(todayStr, 2))}
+                    className={`px-2.5 py-1 rounded text-xs font-bold transition whitespace-nowrap ${
+                      selectedDate === getOffsetDateStr(todayStr, 2)
+                        ? "bg-blue-600 text-white shadow-md"
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                    }`}
+                  >
+                    後天
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 w-full sm:w-auto justify-between sm:justify-end">
+                <span className={`text-xs px-2.5 py-1 rounded-full font-bold border flex items-center gap-1.5 ${
+                  selectedDate === todayStr
+                    ? "bg-emerald-950 text-emerald-300 border-emerald-700"
+                    : selectedDate > todayStr
+                      ? "bg-purple-950 text-purple-300 border-purple-700"
+                      : "bg-slate-800 text-slate-400 border-slate-700"
+                }`}>
+                  <span>{selectedDate === todayStr ? "🟢 今日實時排班" : selectedDate > todayStr ? "🔮 未來預排班表" : "📜 歷史排班紀錄"}</span>
+                </span>
+
+                {userRole === 'admin' && selectedDate !== todayStr && (
+                  <button
+                    onClick={handleCopyScheduleFromToday}
+                    className="bg-indigo-700 hover:bg-indigo-600 text-white px-2.5 py-1 rounded text-xs font-medium transition shadow flex items-center gap-1 whitespace-nowrap"
+                    title="複製今日的所有出勤與機台指派至目前選擇的日期"
+                  >
+                    📋 複製今日排班
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* KPI Summary Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
