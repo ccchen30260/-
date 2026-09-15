@@ -1,0 +1,2575 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>製造管理看板 - GitHub & Supabase 雲端版</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            industrial: {
+              800: '#1e293b',
+              900: '#0f172a',
+              950: '#080d1a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- React & ReactDOM CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel for JSX compilation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Supabase JS Client CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+    .status-pulse {
+      animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse-ring {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+  </style>
+</head>
+<body class="bg-industrial-950 text-slate-100 font-sans antialiased min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    const IconPlus = () => (
+      <svg className="w-4 h-4 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    );
+
+    const IconClipboard = () => (
+      <svg className="w-4 h-4 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+        <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+      </svg>
+    );
+
+    const IconRefresh = () => (
+      <svg className="w-4 h-4 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+      </svg>
+    );
+
+    const IconSearch = () => (
+      <svg className="w-3.5 h-3.5 text-slate-400 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+    );
+
+    const IconUser = () => (
+      <svg className="w-3.5 h-3.5 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+        <circle cx="12" cy="7" r="4"></circle>
+      </svg>
+    );
+
+    const IconCloud = () => (
+      <svg className="w-4 h-4 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+      </svg>
+    );
+
+    const INITIAL_MACHINE_TYPES = ["羅得B", "Kaido", "先導", "覆捲機"];
+
+    const INITIAL_OPERATORS_POOL_S1 = [
+      "方慎之","陳泰安","蔡南嘉","李珮菁","朱建穎","王泳淇",
+      "吳峻霖","黃詠綺","蘭狄","凱文","勞倫司","安東尼",
+      "明華","艾麥倫","邱立斯","拉特","羅內爾","艾佛森"
+    ];
+
+    const INITIAL_OPERATORS_POOL_S2 = [
+      "黃正忠","張韶眞","陳宥庠","黃威翔","羅翊禎","黃文靖",
+      "蔡易良","吳奇玲","詹姆士","達力","山博","羅傑",
+      "達路","童氏蓮","羅德","達布","安吉","羅蘭多"
+    ];
+
+    const INITIAL_OPERATORS_POOL_S3 = [
+      "陳文全","吳國隆","李茂玄","葉秀芬","王俊智","吳慧如",
+      "黃筱珊","吳明珠","蘇炫元","托弗","杰倫","艾諾",
+      "吳氏莊","納撒","格林","喬司華","喬丹","吉姆"
+    ];
+
+    const INITIAL_OPERATORS_POOL_S4 = [
+      "陳喬志","楊代億","廖曉彤","蔡靜儀","賴建亦","施榮傑",
+      "陰其德","黃譯鋒","楊雅婷","羅啟倫","埃爾默","拉斯特",
+      "雷伊","漢斯","達利斯","甘達","特拉多","達爾文"
+    ];
+
+    const SHIFT_PAIR_MAP = {
+      S1: "S3",
+      S2: "S4",
+      S3: "S1",
+      S4: "S2"
+    };
+
+    const REWINDER_GROUPS = [
+      { id: "g1", name: "覆捲機一組 (RW05/RW07/RW08/RW14)", members: ["RW05", "RW07", "RW08", "RW14"] },
+      { id: "g2", name: "覆捲機二組 (RW09/RW10/RW11/RW12)", members: ["RW09", "RW10", "RW11", "RW12"] },
+      { id: "g3", name: "覆捲機三組 (RW16/RW17/RW18/RW19)", members: ["RW16", "RW17", "RW18", "RW19"] }
+    ];
+
+    const DEFAULT_SKILL_GROUPS = [
+      {
+        id: "sg-1",
+        name: "羅得B組",
+        machines: ["W31", "W40"],
+        members: ["陳喬志", "楊代億", "廖曉彤", "蔡靜儀", "黃正忠", "張韶眞", "方慎之", "陳文全"]
+      },
+      {
+        id: "sg-2",
+        name: "Kaido組",
+        machines: ["W32", "W33", "W34", "W35", "W36", "W37", "W38", "W39", "W45"],
+        members: ["賴建亦", "施榮傑", "陰其德", "黃譯鋒", "陳宥庠", "黃威翔", "羅翊禎", "黃文靖", "陳泰安", "吳國隆"]
+      },
+      {
+        id: "sg-3",
+        name: "先導組",
+        machines: ["W42", "W43", "W44"],
+        members: ["楊雅婷", "羅啟倫", "埃爾默", "拉斯特", "蔡易良", "吳奇玲", "蔡南嘉", "李茂玄"]
+      },
+      {
+        id: "sg-4",
+        name: "覆捲機組",
+        machines: ["RW05", "RW07", "RW08", "RW14", "RW09", "RW10", "RW11", "RW12", "RW16", "RW17", "RW18", "RW19"],
+        members: ["雷伊", "漢斯", "達利斯", "甘達", "詹姆士", "達力", "山博", "羅傑", "李珮菁", "葉秀芬"]
+      },
+      {
+        id: "sg-5",
+        name: "通用站別組",
+        machines: ["領班", "QC", "極片搬運", "折彎機"],
+        members: ["特拉多", "達爾文", "達路", "童氏蓮", "羅德", "達布", "安吉", "羅蘭多", "朱建穎", "王俊智"]
+      }
+    ];
+
+    const DEFAULT_MACHINE_STATUS_OPTIONS = [
+      { id: "ms-1", label: "正常運轉", color: "bg-emerald-600 text-emerald-100 border-emerald-400", badge: "bg-emerald-400" },
+      { id: "ms-2", label: "停機保養", color: "bg-amber-600 text-amber-100 border-amber-400", badge: "bg-amber-400" },
+      { id: "ms-3", label: "設備異常", color: "bg-red-600 text-red-100 border-red-400", badge: "bg-red-400" },
+      { id: "ms-4", label: "待機中",   color: "bg-slate-600 text-slate-100 border-slate-400", badge: "bg-slate-400" },
+      { id: "ms-5", label: "換模換線", color: "bg-blue-600 text-blue-100 border-blue-400", badge: "bg-blue-400" }
+    ];
+
+    const DEFAULT_MATERIAL_STATUS_OPTIONS = [
+      { id: "mat-1", label: "供料正常", color: "bg-emerald-700 text-emerald-100 border-emerald-500", icon: "✓" },
+      { id: "mat-2", label: "待料中",   color: "bg-orange-600 text-orange-100 border-orange-400", icon: "⏳" },
+      { id: "mat-3", label: "備料中",   color: "bg-indigo-600 text-indigo-100 border-indigo-400", icon: "🚚" },
+      { id: "mat-4", label: "物料異常", color: "bg-rose-700 text-rose-100 border-rose-400", icon: "⚠" }
+    ];
+
+    const COLOR_THEMES = [
+      { label: "綠色 (正常)", color: "bg-emerald-600 text-emerald-100 border-emerald-400", badge: "bg-emerald-400", icon: "✓" },
+      { label: "橘黃 (警告)", color: "bg-amber-600 text-amber-100 border-amber-400", badge: "bg-amber-400", icon: "⏳" },
+      { label: "紅色 (異常)", color: "bg-red-600 text-red-100 border-red-400", badge: "bg-red-400", icon: "⚠" },
+      { label: "藍色 (切換)", color: "bg-blue-600 text-blue-100 border-blue-400", badge: "bg-blue-400", icon: "⚙" },
+      { label: "紫色 (備料)", color: "bg-purple-600 text-purple-100 border-purple-400", badge: "bg-purple-400", icon: "🚚" },
+      { label: "灰色 (待命)", color: "bg-slate-600 text-slate-100 border-slate-400", badge: "bg-slate-400", icon: "⏸" }
+    ];
+
+    const DEFAULT_MACHINES = [
+      { id: "m-01", type: "", name: "領班", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-02", type: "", name: "QC", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-03", type: "", name: "極片搬運", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-04", type: "", name: "折彎機", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-05", type: "羅得B", name: "W31", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-14", type: "羅得B", name: "W40", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-06", type: "Kaido", name: "W32", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-07", type: "Kaido", name: "W33", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-08", type: "Kaido", name: "W34", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-09", type: "Kaido", name: "W35", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-10", type: "Kaido", name: "W36", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-11", type: "Kaido", name: "W37", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-12", type: "Kaido", name: "W38", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-13", type: "Kaido", name: "W39", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-18", type: "Kaido", name: "W45", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-15", type: "先導", name: "W42", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-16", type: "先導", name: "W43", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-17", type: "先導", name: "W44", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-19", type: "覆捲機", name: "RW05", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-20", type: "覆捲機", name: "RW07", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-21", type: "覆捲機", name: "RW08", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-26", type: "覆捲機", name: "RW14", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-22", type: "覆捲機", name: "RW09", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-23", type: "覆捲機", name: "RW10", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-24", type: "覆捲機", name: "RW11", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-25", type: "覆捲機", name: "RW12", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-27", type: "覆捲機", name: "RW16", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-28", type: "覆捲機", name: "RW17", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-29", type: "覆捲機", name: "RW18", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-30", type: "覆捲機", name: "RW19", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" }
+    ];
+
+    const SQL_SETUP_SCRIPT = `-- 請在 Supabase 儀表板 SQL Editor 執行以下 SQL 語法：
+CREATE TABLE IF NOT EXISTS public.mfg_board (
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 開啟 Row Level Security (RLS) 並允許公開讀寫
+ALTER TABLE public.mfg_board ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public Full Access" ON public.mfg_board;
+CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH CHECK (true);
+`;
+
+    function App() {
+      // Supabase State
+      const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("mfg_supabase_url") || "");
+      const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem("mfg_supabase_key") || "");
+      const [supabaseConnected, setSupabaseConnected] = useState(false);
+      const [showSupabaseModal, setShowSupabaseModal] = useState(false);
+      const supabaseRef = useRef(null);
+
+      // App Core States
+      const [machines, setMachines] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_machines_v8");
+        return saved ? JSON.parse(saved) : DEFAULT_MACHINES;
+      });
+
+      const [currentShift, setCurrentShift] = useState(() => {
+        return localStorage.getItem("mfg_board_current_shift_v3") || "S4";
+      });
+
+      const supportShift = SHIFT_PAIR_MAP[currentShift] || "S2";
+
+      const [machineTypes, setMachineTypes] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_machine_types_v3");
+        return saved ? JSON.parse(saved) : INITIAL_MACHINE_TYPES;
+      });
+
+      const [mStatusOptions, setMStatusOptions] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_mstatus_opt_v4");
+        return saved ? JSON.parse(saved) : DEFAULT_MACHINE_STATUS_OPTIONS;
+      });
+
+      const [matStatusOptions, setMatStatusOptions] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_matstatus_opt_v4");
+        return saved ? JSON.parse(saved) : DEFAULT_MATERIAL_STATUS_OPTIONS;
+      });
+
+      const [poolS1] = useState(INITIAL_OPERATORS_POOL_S1);
+      const [poolS2] = useState(INITIAL_OPERATORS_POOL_S2);
+      const [poolS3] = useState(INITIAL_OPERATORS_POOL_S3);
+      const [poolS4] = useState(INITIAL_OPERATORS_POOL_S4);
+
+      const poolsMap = useMemo(() => ({
+        S1: poolS1,
+        S2: poolS2,
+        S3: poolS3,
+        S4: poolS4
+      }), [poolS1, poolS2, poolS3, poolS4]);
+
+      const currentDutyPool = poolsMap[currentShift] || [];
+      const currentSupportPool = poolsMap[supportShift] || [];
+
+      const [skillGroups, setSkillGroups] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_skill_groups_v4");
+        return saved ? JSON.parse(saved) : DEFAULT_SKILL_GROUPS;
+      });
+
+      const [attendanceMap, setAttendanceMap] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_attendance_v6");
+        return saved ? JSON.parse(saved) : {};
+      });
+
+      const [showGroupModal, setShowGroupModal] = useState(false);
+      const [selectedGroupId, setSelectedGroupId] = useState(null);
+      const [allowCrossGroup, setAllowCrossGroup] = useState(false);
+
+      // Auth & Role state
+      const [userRole, setUserRole] = useState(null);
+      const [adminPassword, setAdminPassword] = useState(() => {
+        return localStorage.getItem("mfg_board_admin_pw_v3") || "0000";
+      });
+      const [inputPassword, setInputPassword] = useState("");
+      const [loginError, setLoginError] = useState("");
+
+      const [showChangePwModal, setShowChangePwModal] = useState(false);
+      const [pwForm, setPwForm] = useState({ oldPw: "", newPw: "", confirmPw: "" });
+      const [pwError, setPwError] = useState("");
+
+      const [confirmDialog, setConfirmDialog] = useState({ open: false, title: "", message: "", onConfirm: null });
+
+      // Filters & Search
+      const [filterType, setFilterType] = useState("ALL");
+      const [filterStatus, setFilterStatus] = useState("ALL");
+      const [searchTerm, setSearchTerm] = useState("");
+      const [groupSearchTerm, setGroupSearchTerm] = useState("");
+      const [activeTabPool, setActiveTabPool] = useState("duty");
+      const [noticeMessage, setNoticeMessage] = useState(null);
+
+      // Modals
+      const [assignModal, setAssignModal] = useState({ open: false, machineId: null, role: null });
+      const [statusModal, setStatusModal] = useState({ open: false, machineId: null, type: null });
+      const [isManagingStatuses, setIsManagingStatuses] = useState(false);
+      const [editingStatusId, setEditingStatusId] = useState(null);
+      const [editingStatusLabel, setEditingStatusLabel] = useState("");
+      const [newStatusForm, setNewStatusForm] = useState({ label: "", colorIndex: 0 });
+
+      const [showExportModal, setShowExportModal] = useState(false);
+      const [showAddModal, setShowAddModal] = useState(false);
+
+      // Machine Type Management
+      const [isManagingTypes, setIsManagingTypes] = useState(false);
+      const [editingTypeIndex, setEditingTypeIndex] = useState(null);
+      const [editingTypeValue, setEditingTypeValue] = useState("");
+      const [newTypeName, setNewTypeName] = useState("");
+
+      // New machine form
+      const [newMachine, setNewMachine] = useState({ type: "羅得B", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
+
+      // Time
+      const [currentTime, setCurrentTime] = useState(new Date().toLocaleString('zh-TW', { hour12: false }));
+
+      useEffect(() => {
+        const timer = setInterval(() => {
+          setCurrentTime(new Date().toLocaleString('zh-TW', { hour12: false }));
+        }, 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      // LocalStorage Backup Sync
+      useEffect(() => {
+        localStorage.setItem("mfg_board_machines_v8", JSON.stringify(machines));
+        localStorage.setItem("mfg_board_machine_types_v3", JSON.stringify(machineTypes));
+        localStorage.setItem("mfg_board_current_shift_v3", currentShift);
+        localStorage.setItem("mfg_board_mstatus_opt_v4", JSON.stringify(mStatusOptions));
+        localStorage.setItem("mfg_board_matstatus_opt_v4", JSON.stringify(matStatusOptions));
+        localStorage.setItem("mfg_board_skill_groups_v4", JSON.stringify(skillGroups));
+        localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
+      }, [machines, machineTypes, currentShift, mStatusOptions, matStatusOptions, skillGroups, attendanceMap]);
+
+      // Initialize Supabase Client & Realtime Subscription
+      useEffect(() => {
+        if (!supabaseUrl || !supabaseKey || !window.supabase) {
+          setSupabaseConnected(false);
+          return;
+        }
+
+        try {
+          const client = window.supabase.createClient(supabaseUrl, supabaseKey);
+          supabaseRef.current = client;
+
+          // Fetch Initial State from Supabase
+          const fetchInitial = async () => {
+            const { data, error } = await client.from('mfg_board').select('*').eq('id', 'global_state').single();
+            if (data && data.data) {
+              const state = data.data;
+              if (state.machines) setMachines(state.machines);
+              if (state.currentShift) setCurrentShift(state.currentShift);
+              if (state.machineTypes) setMachineTypes(state.machineTypes);
+              if (state.mStatusOptions) setMStatusOptions(state.mStatusOptions);
+              if (state.matStatusOptions) setMatStatusOptions(state.matStatusOptions);
+              if (state.skillGroups) setSkillGroups(state.skillGroups);
+              if (state.attendanceMap) setAttendanceMap(state.attendanceMap);
+            }
+            setSupabaseConnected(true);
+          };
+
+          fetchInitial();
+
+          // Subscribe to Realtime Postgres Changes
+          const channel = client
+            .channel('public:mfg_board')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'mfg_board' }, (payload) => {
+              if (payload.new && payload.new.id === 'global_state' && payload.new.data) {
+                const state = payload.new.data;
+                if (state.machines) setMachines(state.machines);
+                if (state.currentShift) setCurrentShift(state.currentShift);
+                if (state.machineTypes) setMachineTypes(state.machineTypes);
+                if (state.mStatusOptions) setMStatusOptions(state.mStatusOptions);
+                if (state.matStatusOptions) setMatStatusOptions(state.matStatusOptions);
+                if (state.skillGroups) setSkillGroups(state.skillGroups);
+                if (state.attendanceMap) setAttendanceMap(state.attendanceMap);
+              }
+            })
+            .subscribe();
+
+          return () => {
+            client.removeChannel(channel);
+          };
+        } catch (err) {
+          console.error("Supabase connection error:", err);
+          setSupabaseConnected(false);
+        }
+      }, [supabaseUrl, supabaseKey]);
+
+      // Helper to Push Full State to Supabase
+      const pushToSupabase = async (overrideState = {}) => {
+        if (!supabaseRef.current || !supabaseConnected) return;
+
+        const payload = {
+          machines,
+          currentShift,
+          machineTypes,
+          mStatusOptions,
+          matStatusOptions,
+          skillGroups,
+          attendanceMap,
+          ...overrideState
+        };
+
+        try {
+          await supabaseRef.current.from('mfg_board').upsert({
+            id: 'global_state',
+            data: payload,
+            updated_at: new Date()
+          });
+        } catch (err) {
+          console.error("Failed to push state to Supabase:", err);
+        }
+      };
+
+      const showNotice = (text, type = "info") => {
+        setNoticeMessage({ text, type });
+        setTimeout(() => setNoticeMessage(null), 3000);
+      };
+
+      const handleSaveSupabaseCredentials = (e) => {
+        e.preventDefault();
+        localStorage.setItem("mfg_supabase_url", supabaseUrl.trim());
+        localStorage.setItem("mfg_supabase_key", supabaseKey.trim());
+        setShowSupabaseModal(false);
+        showNotice("已儲存 Supabase 連線設定！系統將自動連接...", "success");
+      };
+
+      const handleShiftChange = (newShift) => {
+        if (newShift === currentShift) return;
+        setCurrentShift(newShift);
+        const newSupport = SHIFT_PAIR_MAP[newShift];
+        pushToSupabase({ currentShift: newShift });
+        showNotice(`已切換當班班別為 [${newShift}]（支援班別：${newSupport}）`, "info");
+      };
+
+      const handleAdminLogin = (e) => {
+        e.preventDefault();
+        if (inputPassword === adminPassword) {
+          setUserRole("admin");
+          setInputPassword("");
+          setLoginError("");
+          showNotice("登入成功！歡迎使用管理員權限", "success");
+        } else {
+          setLoginError("密碼錯誤！(預設密碼為 0000)");
+        }
+      };
+
+      const handleChangePassword = (e) => {
+        e.preventDefault();
+        if (pwForm.oldPw !== adminPassword) {
+          setPwError("原密碼輸入錯誤！");
+          return;
+        }
+        if (pwForm.newPw.length < 4) {
+          setPwError("新密碼長度至少需 4 個字元！");
+          return;
+        }
+        if (pwForm.newPw !== pwForm.confirmPw) {
+          setPwError("兩次輸入的新密碼不一致！");
+          return;
+        }
+        setAdminPassword(pwForm.newPw);
+        localStorage.setItem("mfg_board_admin_pw_v3", pwForm.newPw);
+        setShowChangePwModal(false);
+        setPwForm({ oldPw: "", newPw: "", confirmPw: "" });
+        setPwError("");
+        showNotice("密碼已成功更新！", "success");
+      };
+
+      const handleAddMachineType = () => {
+        const name = newTypeName.trim();
+        if (!name) return;
+        if (machineTypes.includes(name)) {
+          showNotice("此機台類型已存在！", "error");
+          return;
+        }
+        const updated = [...machineTypes, name];
+        setMachineTypes(updated);
+        setNewTypeName("");
+        pushToSupabase({ machineTypes: updated });
+        showNotice(`已新增機台類型 [${name}]`, "success");
+      };
+
+      const handleSaveEditMachineType = (index) => {
+        const val = editingTypeValue.trim();
+        if (!val) return;
+        const oldType = machineTypes[index];
+        const updatedTypes = machineTypes.map((t, i) => i === index ? val : t);
+        const updatedMachines = machines.map(m => m.type === oldType ? { ...m, type: val } : m);
+        setMachineTypes(updatedTypes);
+        setMachines(updatedMachines);
+        setEditingTypeIndex(null);
+        setEditingTypeValue("");
+        pushToSupabase({ machineTypes: updatedTypes, machines: updatedMachines });
+        showNotice("已修改類型名稱！", "success");
+      };
+
+      const handleDeleteMachineType = (typeName) => {
+        setConfirmDialog({
+          open: true,
+          title: "刪除機台類型確認",
+          message: `確定要刪除「${typeName}」機台類型嗎？`,
+          onConfirm: () => {
+            const updatedTypes = machineTypes.filter(t => t !== typeName);
+            setMachineTypes(updatedTypes);
+            if (newMachine.type === typeName) {
+              setNewMachine(prev => ({ ...prev, type: updatedTypes[0] || "" }));
+            }
+            if (filterType === typeName) setFilterType("ALL");
+            pushToSupabase({ machineTypes: updatedTypes });
+            showNotice(`已刪除機台類型 [${typeName}]`, "info");
+          }
+        });
+      };
+
+      const getMatchingSkillGroups = (machineName) => {
+        return skillGroups.filter(g => g.machines && g.machines.includes(machineName));
+      };
+
+      const handleAddGroup = () => {
+        const newG = {
+          id: "sg-" + Date.now(),
+          name: "新技能分組",
+          machines: [],
+          members: []
+        };
+        const updated = [...skillGroups, newG];
+        setSkillGroups(updated);
+        setSelectedGroupId(newG.id);
+        pushToSupabase({ skillGroups: updated });
+        showNotice("已建立新分組，請設定涵蓋機台與人員", "info");
+      };
+
+      const handleUpdateGroupName = (id, newName) => {
+        const updated = skillGroups.map(g => g.id === id ? { ...g, name: newName } : g);
+        setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
+      };
+
+      const handleToggleMachineInGroup = (groupId, machineName) => {
+        const updated = skillGroups.map(g => {
+          if (g.id !== groupId) return g;
+          const exists = g.machines.includes(machineName);
+          const machinesList = exists ? g.machines.filter(m => m !== machineName) : [...g.machines, machineName];
+          return { ...g, machines: machinesList };
+        });
+        setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
+      };
+
+      const handleToggleMemberInGroup = (groupId, personName) => {
+        const updated = skillGroups.map(g => {
+          if (g.id !== groupId) return g;
+          const exists = g.members.includes(personName);
+          const members = exists ? g.members.filter(m => m !== personName) : [...g.members, personName];
+          return { ...g, members };
+        });
+        setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
+      };
+
+      const handleDeleteGroup = (groupId) => {
+        const targetG = skillGroups.find(g => g.id === groupId);
+        setConfirmDialog({
+          open: true,
+          title: "刪除分組確認",
+          message: `確定要刪除分組 [${targetG ? targetG.name : ''}] 嗎？`,
+          onConfirm: () => {
+            const updated = skillGroups.filter(g => g.id !== groupId);
+            setSkillGroups(updated);
+            if (selectedGroupId === groupId) setSelectedGroupId(null);
+            pushToSupabase({ skillGroups: updated });
+            showNotice(`已刪除分組 [${targetG ? targetG.name : ''}]`, "info");
+          }
+        });
+      };
+
+      const handleResetBoard = () => {
+        setConfirmDialog({
+          open: true,
+          title: "重置看板確認",
+          message: "確定要重置看板嗎？所有機台的「操作員」與「預備員」將清空，且「機況」恢復為「正常運轉」（「料況」將保留不變）。",
+          onConfirm: () => {
+            const updated = machines.map(m => ({
+              ...m,
+              operator: "",
+              backup: "",
+              mStatus: "正常運轉"
+            }));
+            setMachines(updated);
+            pushToSupabase({ machines: updated });
+            showNotice("看板已重置！操作員與預備員已清空，機況已恢復為正常運轉，料況完整保留。", "success");
+          }
+        });
+      };
+
+      const assignedMap = useMemo(() => {
+        const map = {};
+        machines.forEach(m => {
+          if (m.operator) map[m.operator] = { machineId: m.id, machineName: m.name, role: "操作員", type: m.type };
+          if (m.backup) map[m.backup] = { machineId: m.id, machineName: m.name, role: "預備員", type: m.type };
+        });
+        return map;
+      }, [machines]);
+
+      const toggleAttendance = (name, isDuty) => {
+        setAttendanceMap(prev => {
+          const current = isDuty ? (prev[name] !== false) : !!prev[name];
+          const nextVal = !current;
+          let updatedMachines = machines;
+          
+          if (!nextVal) {
+            updatedMachines = machines.map(m => {
+              let updated = { ...m };
+              if (updated.operator === name) updated.operator = "";
+              if (updated.backup === name) updated.backup = "";
+              return updated;
+            });
+            setMachines(updatedMachines);
+          }
+
+          const nextAttendance = { ...prev, [name]: nextVal };
+          pushToSupabase({ attendanceMap: nextAttendance, machines: updatedMachines });
+          return nextAttendance;
+        });
+      };
+
+      const selectAllDuty = () => {
+        setAttendanceMap(prev => {
+          const next = { ...prev };
+          currentDutyPool.forEach(p => { next[p] = true; });
+          pushToSupabase({ attendanceMap: next });
+          return next;
+        });
+      };
+
+      const deselectAllDuty = () => {
+        setAttendanceMap(prev => {
+          const next = { ...prev };
+          currentDutyPool.forEach(p => { next[p] = false; });
+          const updatedMachines = machines.map(m => {
+            let updated = { ...m };
+            if (currentDutyPool.includes(updated.operator)) updated.operator = "";
+            if (currentDutyPool.includes(updated.backup)) updated.backup = "";
+            return updated;
+          });
+          setMachines(updatedMachines);
+          pushToSupabase({ attendanceMap: next, machines: updatedMachines });
+          return next;
+        });
+      };
+
+      const selectAllSupport = () => {
+        setAttendanceMap(prev => {
+          const next = { ...prev };
+          currentSupportPool.forEach(p => { next[p] = true; });
+          pushToSupabase({ attendanceMap: next });
+          return next;
+        });
+      };
+
+      const deselectAllSupport = () => {
+        setAttendanceMap(prev => {
+          const next = { ...prev };
+          currentSupportPool.forEach(p => { next[p] = false; });
+          const updatedMachines = machines.map(m => {
+            let updated = { ...m };
+            if (currentSupportPool.includes(updated.operator)) updated.operator = "";
+            if (currentSupportPool.includes(updated.backup)) updated.backup = "";
+            return updated;
+          });
+          setMachines(updatedMachines);
+          pushToSupabase({ attendanceMap: next, machines: updatedMachines });
+          return next;
+        });
+      };
+
+      const dutyCheckedCount = useMemo(() => {
+        return currentDutyPool.filter(p => attendanceMap[p] !== false).length;
+      }, [currentDutyPool, attendanceMap]);
+
+      const supportCheckedCount = useMemo(() => {
+        return currentSupportPool.filter(p => !!attendanceMap[p]).length;
+      }, [currentSupportPool, attendanceMap]);
+
+      const unassignedPeople = useMemo(() => {
+        const dutyPresent = currentDutyPool.filter(p => attendanceMap[p] !== false);
+        const supportPresent = currentSupportPool.filter(p => !!attendanceMap[p]);
+        const allPresent = [...dutyPresent, ...supportPresent];
+        return allPresent.filter(p => !assignedMap[p]);
+      }, [currentDutyPool, currentSupportPool, attendanceMap, assignedMap]);
+
+      const stats = useMemo(() => {
+        const expectedCount = currentDutyPool.length;
+        const actualCount = dutyCheckedCount + supportCheckedCount;
+        const overtimeCount = supportCheckedCount;
+
+        const excludedNames = ["領班", "QC", "極片搬運", "折彎機"];
+        const running = machines.filter(m => m.mStatus === "正常運轉" && !excludedNames.includes(m.name)).length;
+        const down = machines.filter(m => m.mStatus === "設備異常" && !excludedNames.includes(m.name)).length;
+        const maint = machines.filter(m => m.mStatus === "停機保養" && !excludedNames.includes(m.name)).length;
+
+        return { expectedCount, actualCount, overtimeCount, running, down, maint };
+      }, [machines, currentDutyPool, dutyCheckedCount, supportCheckedCount]);
+
+      const filteredMachines = useMemo(() => {
+        return machines.filter(m => {
+          const matchType = filterType === "ALL" || m.type === filterType;
+          const matchStatus = filterStatus === "ALL" || m.mStatus === filterStatus;
+          const query = searchTerm.trim().toLowerCase();
+          const matchSearch = !query || 
+            m.name.toLowerCase().includes(query) ||
+            m.type.toLowerCase().includes(query) ||
+            (m.operator && m.operator.toLowerCase().includes(query)) ||
+            (m.backup && m.backup.toLowerCase().includes(query));
+          return matchType && matchStatus && matchSearch;
+        });
+      }, [machines, filterType, filterStatus, searchTerm]);
+
+      const filteredSkillGroups = useMemo(() => {
+        if (!groupSearchTerm.trim()) return skillGroups;
+        const q = groupSearchTerm.trim().toLowerCase();
+        return skillGroups.filter(g => g.name.toLowerCase().includes(q));
+      }, [skillGroups, groupSearchTerm]);
+
+      const handleRemovePersonnel = (machineId, role, e) => {
+        if (e) e.stopPropagation();
+        const targetM = machines.find(m => m.id === machineId);
+        const group = targetM ? REWINDER_GROUPS.find(g => g.members.includes(targetM.name)) : null;
+        const targetNames = group ? group.members : [targetM?.name];
+
+        const updated = machines.map(m => {
+          if (targetNames.includes(m.name)) {
+            return { ...m, [role]: "" };
+          }
+          return m;
+        });
+        setMachines(updated);
+        pushToSupabase({ machines: updated });
+        showNotice("已移除該欄位指派人員", "info");
+      };
+
+      const handleAssignPersonFromModal = (personName) => {
+        const { machineId, role } = assignModal;
+        if (!machineId || !role) return;
+
+        const targetM = machines.find(m => m.id === machineId);
+        const group = targetM ? REWINDER_GROUPS.find(g => g.members.includes(targetM.name)) : null;
+        const targetNames = group ? group.members : [targetM?.name];
+
+        const updated = machines.map(m => {
+          let item = { ...m };
+          if (item.operator === personName) item.operator = "";
+          if (item.backup === personName) item.backup = "";
+
+          if (targetNames.includes(item.name)) {
+            item[role] = personName;
+          }
+          return item;
+        });
+
+        setMachines(updated);
+        pushToSupabase({ machines: updated });
+        setAssignModal({ open: false, machineId: null, role: null });
+        showNotice(`已成功指派 [${personName}] 至 ${group ? group.name : targetM?.name}`, "success");
+      };
+
+      const handleSelectStatusFromModal = (val) => {
+        const { machineId, type } = statusModal;
+        if (!machineId || !type) return;
+
+        const updated = machines.map(m => m.id === machineId ? { ...m, [type]: val } : m);
+        setMachines(updated);
+        pushToSupabase({ machines: updated });
+        setStatusModal({ open: false, machineId: null, type: null });
+        setIsManagingStatuses(false);
+        showNotice("狀態更動完成", "info");
+      };
+
+      const handleCreateStatusOption = (type) => {
+        if (!newStatusForm.label.trim()) return;
+        const theme = COLOR_THEMES[newStatusForm.colorIndex] || COLOR_THEMES[0];
+        const newOpt = {
+          id: (type === "mStatus" ? "ms-" : "mat-") + Date.now(),
+          label: newStatusForm.label.trim(),
+          color: theme.color,
+          badge: theme.badge,
+          icon: theme.icon
+        };
+
+        if (type === "mStatus") {
+          const updated = [...mStatusOptions, newOpt];
+          setMStatusOptions(updated);
+          pushToSupabase({ mStatusOptions: updated });
+        } else {
+          const updated = [...matStatusOptions, newOpt];
+          setMatStatusOptions(updated);
+          pushToSupabase({ matStatusOptions: updated });
+        }
+
+        setNewStatusForm({ label: "", colorIndex: 0 });
+        showNotice(`已新增${type === "mStatus" ? "機況" : "料況"}選項 [${newOpt.label}]`, "success");
+      };
+
+      const handleSaveEditedStatusLabel = (type, id) => {
+        if (!editingStatusLabel.trim()) return;
+        if (type === "mStatus") {
+          const updated = mStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o);
+          setMStatusOptions(updated);
+          pushToSupabase({ mStatusOptions: updated });
+        } else {
+          const updated = matStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o);
+          setMatStatusOptions(updated);
+          pushToSupabase({ matStatusOptions: updated });
+        }
+        setEditingStatusId(null);
+        setEditingStatusLabel("");
+        showNotice("已更新狀態名稱", "success");
+      };
+
+      const handleDeleteStatusOption = (type, id, label) => {
+        setConfirmDialog({
+          open: true,
+          title: "刪除狀態選項確認",
+          message: `確定要刪除「${label}」狀態選項嗎？`,
+          onConfirm: () => {
+            if (type === "mStatus") {
+              const updated = mStatusOptions.filter(o => o.id !== id);
+              setMStatusOptions(updated);
+              pushToSupabase({ mStatusOptions: updated });
+            } else {
+              const updated = matStatusOptions.filter(o => o.id !== id);
+              setMatStatusOptions(updated);
+              pushToSupabase({ matStatusOptions: updated });
+            }
+            showNotice(`已刪除狀態選項 [${label}]`, "info");
+          }
+        });
+      };
+
+      const handleCreateMachine = (e) => {
+        e.preventDefault();
+        if (!newMachine.name.trim()) return;
+        const id = "m-" + Date.now();
+        const updated = [...machines, { ...newMachine, id }];
+        setMachines(updated);
+        pushToSupabase({ machines: updated });
+        setShowAddModal(false);
+        setNewMachine({ type: machineTypes[0] || "", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
+        showNotice(`已建立新機台 [${newMachine.name}]`, "success");
+      };
+
+      const generateReportText = () => {
+        let text = `【製造管理看板 - 當前現場排班與機況概況】\n`;
+        text += `產生時間：${currentTime}\n`;
+        text += `========================================\n`;
+        machines.forEach((m, idx) => {
+          text += `${idx + 1}. [${m.type || '通用'}] ${m.name} | 操作員: ${m.operator || '未指派'} | 預備員: ${m.backup || '無'} | 機況: ${m.mStatus} | 料況: ${m.matStatus || '未設定'}\n`;
+        });
+        text += `========================================\n`;
+        text += `統計：應到 ${stats.expectedCount} 人 | 實到 ${stats.actualCount} 人 | 加班 ${stats.overtimeCount} 人 | 正常運轉 ${stats.running} 台 (排除非設備) | 設備異常 ${stats.down} 台 | 停機保養 ${stats.maint} 台`;
+        return text;
+      };
+
+      const handleCopyToClipboard = () => {
+        const text = generateReportText();
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand("copy");
+          showNotice("排班概況表已複製到剪貼簿！", "success");
+        } catch (err) {
+          showNotice("複製失敗，請手動選取文字複製", "error");
+        }
+        document.body.removeChild(textarea);
+      };
+
+      if (userRole === null) {
+        return (
+          <div className="min-h-screen bg-industrial-950 flex items-center justify-center p-4">
+            <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 sm:p-8 space-y-6">
+              
+              <div className="text-center space-y-2">
+                <div className="w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center text-3xl mx-auto shadow-lg shadow-blue-500/30">
+                  🏭
+                </div>
+                <h1 className="text-2xl font-black tracking-wider text-slate-100">
+                  製造管理看板
+                </h1>
+                <p className="text-xs text-slate-400">Smart Shopfloor Control Board (Cloud Edition)</p>
+                <div className="pt-1">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                    supabaseConnected 
+                      ? "bg-emerald-950 text-emerald-300 border-emerald-700" 
+                      : "bg-amber-950 text-amber-300 border-amber-700"
+                  }`}>
+                    {supabaseConnected ? "🟢 Supabase 雲端實時連線" : "🟡 單機 LocalStorage 模式"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-4 pt-2">
+                <div className="bg-slate-950/80 border border-slate-800 p-4 rounded-xl space-y-2 hover:border-slate-700 transition">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                      1. 檢視者模式 (靜態瀏覽)
+                    </span>
+                    <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded-full"> 免密碼 </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    僅觀看現場實時機況與動態看板，不具備編輯與排班權限。
+                  </p>
+                  <button
+                    onClick={() => {
+                      setUserRole("viewer");
+                      showNotice("已進入檢視者模式", "info");
+                    }}
+                    className="w-full bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold py-2.5 rounded-lg transition shadow"
+                  >
+                    進入觀看看板
+                  </button>
+                </div>
+
+                <form onSubmit={handleAdminLogin} className="bg-slate-950/80 border border-slate-800 p-4 rounded-xl space-y-3 hover:border-slate-700 transition">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                      2. 管理員登入 (全權限)
+                    </span>
+                    <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded-full"> 需要密碼 </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    可調整人員派工、增修機台/機台類型、設定機況料況及重置看板。
+                  </p>
+
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      placeholder="請輸入管理員密碼 (預設: 0000)"
+                      value={inputPassword}
+                      onChange={e => {
+                        setInputPassword(e.target.value);
+                        setLoginError("");
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs px-3 py-2 rounded-lg focus:outline-none focus:border-blue-500"
+                    />
+                    {loginError && (
+                      <div className="text-[11px] text-rose-400 font-medium">
+                        ⚠️ {loginError}
+                      </div>
+                    )}
+                    <button
+                      type="submit"
+                      className="w-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold py-2.5 rounded-lg transition shadow"
+                    >
+                      管理員登入
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800">
+                <span>預設管理員密碼：<code className="text-blue-400 font-mono">0000</code></span>
+                <button
+                  onClick={() => setShowSupabaseModal(true)}
+                  className="text-blue-400 hover:underline flex items-center"
+                >
+                  <IconCloud /> 設定 Supabase 雲端
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen flex flex-col bg-industrial-950">
+          
+          {/* Header */}
+          <header className="bg-slate-900 border-b border-slate-800 px-4 py-3 sticky top-0 z-30 shadow-md">
+            <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+              
+              <div className="flex items-center space-x-3 w-full md:w-auto justify-between md:justify-start">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-blue-500/30">
+                    🏭
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-black tracking-wider text-slate-100 flex items-center gap-2">
+                      製造管理看板
+                      <span className={`text-xs border px-2 py-0.5 rounded-full font-normal ${
+                        userRole === 'admin' 
+                          ? 'bg-purple-900/60 text-purple-300 border-purple-500/30' 
+                          : 'bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
+                      }`}>
+                        {userRole === 'admin' ? '🔑 管理員權限' : '👁️ 檢視者模式'}
+                      </span>
+                      <button
+                        onClick={() => setShowSupabaseModal(true)}
+                        className={`text-[10px] border px-2 py-0.5 rounded-full font-normal transition flex items-center ${
+                          supabaseConnected 
+                            ? 'bg-emerald-950 text-emerald-300 border-emerald-700 hover:bg-emerald-900' 
+                            : 'bg-amber-950 text-amber-300 border-amber-700 hover:bg-amber-900'
+                        }`}
+                        title="點擊設定 Supabase 雲端資料庫"
+                      >
+                        <IconCloud /> {supabaseConnected ? "雲端實時連線" : "單機模式"}
+                      </button>
+                    </h1>
+                  </div>
+                </div>
+
+                <div className="text-right md:hidden font-mono text-xs text-blue-400 bg-slate-800/80 px-2.5 py-1 rounded border border-slate-700">
+                  {currentTime}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center flex-wrap gap-2 w-full md:w-auto justify-end">
+                {/* Active Shift Selector */}
+                <div className="flex items-center space-x-1 bg-slate-950 px-2.5 py-1 rounded-lg border border-amber-500/40 shadow-inner">
+                  <span className="text-xs font-bold text-amber-400 flex items-center gap-1">
+                    ⚡ 當班班別:
+                  </span>
+                  {["S1", "S2", "S3", "S4"].map(shift => (
+                    <button
+                      key={shift}
+                      onClick={() => handleShiftChange(shift)}
+                      className={`px-2.5 py-1 rounded text-xs font-bold transition ${
+                        currentShift === shift
+                          ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 scale-105"
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                      }`}
+                    >
+                      {shift}當班
+                    </button>
+                  ))}
+                </div>
+
+                {userRole === 'admin' && (
+                  <>
+                    <button 
+                      onClick={() => {
+                        setIsManagingTypes(false);
+                        setShowAddModal(true);
+                      }}
+                      className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition shadow"
+                    >
+                      <IconPlus /> 新增機台
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setShowGroupModal(true);
+                        if (skillGroups.length > 0 && !selectedGroupId) {
+                          setSelectedGroupId(skillGroups[0].id);
+                        }
+                      }}
+                      className="bg-purple-700 hover:bg-purple-600 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition shadow"
+                    >
+                      👥 機台人員分組
+                    </button>
+                    <button 
+                      onClick={() => setShowExportModal(true)}
+                      className="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition shadow"
+                    >
+                      <IconClipboard /> 匯出排班概況
+                    </button>
+                    <button 
+                      onClick={handleResetBoard}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition"
+                      title="重置操作員與預備員 (料況保留)"
+                    >
+                      <IconRefresh /> 重置看板
+                    </button>
+                    <button
+                      onClick={() => setShowChangePwModal(true)}
+                      className="bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-800/60 px-3 py-1.5 rounded-md text-xs font-medium transition"
+                    >
+                      🔒 修改密碼
+                    </button>
+                  </>
+                )}
+
+                <button
+                  onClick={() => {
+                    setUserRole(null);
+                    showNotice("已登出當前身份", "info");
+                  }}
+                  className="bg-slate-800 hover:bg-slate-700 text-rose-300 border border-rose-900/60 px-3 py-1.5 rounded-md text-xs font-medium transition"
+                >
+                  🚪 {userRole === 'admin' ? '登出' : '切換身份'}
+                </button>
+                
+                <div className="hidden md:block font-mono text-xs text-blue-400 bg-slate-800 px-3 py-1.5 rounded-md border border-slate-700">
+                  {currentTime}
+                </div>
+              </div>
+
+            </div>
+          </header>
+
+          {/* Toast Notice */}
+          {noticeMessage && (
+            <div className={`fixed top-16 right-5 z-50 px-4 py-2.5 rounded-lg shadow-xl text-xs font-medium flex items-center space-x-2 border transition-all transform translate-y-2 ${
+              noticeMessage.type === 'error' ? 'bg-rose-900/90 text-rose-100 border-rose-500' :
+              noticeMessage.type === 'success' ? 'bg-emerald-900/90 text-emerald-100 border-emerald-500' :
+              'bg-blue-900/90 text-blue-100 border-blue-500'
+            }`}>
+              <span>💡 {noticeMessage.text}</span>
+            </div>
+          )}
+
+          {/* Main Dashboard Layout */}
+          <main className="max-w-7xl mx-auto w-full p-4 flex-1 flex flex-col gap-4">
+            
+            {/* KPI Summary Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-purple-400 font-medium">應到人數 ({currentShift}當班)</div>
+                <div className="text-2xl font-bold text-purple-200 mt-1">{stats.expectedCount} <span className="text-xs text-slate-400 font-normal">人</span></div>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-emerald-400 font-medium">實到人數 (總出勤)</div>
+                <div className="text-2xl font-bold text-emerald-300 mt-1">{stats.actualCount} <span className="text-xs text-slate-400 font-normal">人</span></div>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-blue-400 font-medium">加班人數 ({supportShift}支援)</div>
+                <div className="text-2xl font-bold text-blue-300 mt-1">{stats.overtimeCount} <span className="text-xs text-slate-400 font-normal">人</span></div>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-emerald-400 font-medium flex items-center justify-between">
+                  <span className="flex items-center">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 mr-1.5 status-pulse"></span> 正常運轉
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-normal">(扣非設備)</span>
+                </div>
+                <div className="text-2xl font-bold text-emerald-300 mt-1">{stats.running} <span className="text-xs text-slate-400 font-normal">台</span></div>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-red-400 font-medium flex items-center">
+                  <span className="w-2 h-2 rounded-full bg-red-400 mr-1.5"></span> 設備異常
+                </div>
+                <div className="text-2xl font-bold text-red-300 mt-1">{stats.down} <span className="text-xs text-slate-400 font-normal">台</span></div>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-amber-400 font-medium flex items-center">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 mr-1.5"></span> 停機保養
+                </div>
+                <div className="text-2xl font-bold text-amber-300 mt-1">{stats.maint} <span className="text-xs text-slate-400 font-normal">台</span></div>
+              </div>
+            </div>
+
+            {}
+            <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col shadow">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                  <h2 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    📋 現場出勤點名表
+                    <span className="text-[11px] font-normal text-slate-400">
+                      ({currentShift}當班預設出勤，取消勾選=請假 / {supportShift}預設未加班，勾選=加班出勤)
+                    </span>
+                  </h2>
+                </div>
+                <div className="flex items-center space-x-3 text-xs text-slate-400">
+                  <span>應到: <strong className="text-purple-300">{stats.expectedCount}</strong> 人</span>
+                  <span>實到: <strong className="text-emerald-400">{stats.actualCount}</strong> 人</span>
+                  <span>加班: <strong className="text-blue-300">{stats.overtimeCount}</strong> 人</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {/* Duty Shift Roll Call */}
+                <div className="bg-slate-950/60 border border-purple-900/40 p-2 rounded-lg">
+                  <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/80">
+                    <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-purple-400"></span>
+                      {currentShift}當班 (應到 {currentDutyPool.length} 人 / 實到 {dutyCheckedCount} 人)
+                    </span>
+                    {userRole === 'admin' && (
+                      <div className="space-x-1 text-[10px]">
+                        <button onClick={selectAllDuty} className="text-purple-400 hover:text-purple-200 underline">全選</button>
+                        <span className="text-slate-600">|</span>
+                        <button onClick={deselectAllDuty} className="text-slate-400 hover:text-slate-200 underline">全不選</button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-1.5">
+                    {currentDutyPool.map(name => {
+                      const isChecked = attendanceMap[name] !== false;
+                      return (
+                        <label
+                          key={name}
+                          className={`flex items-center justify-center space-x-1 px-1.5 py-1 rounded text-[11px] cursor-pointer border select-none transition whitespace-nowrap ${
+                            isChecked
+                              ? "bg-purple-950/70 border-purple-700/60 text-purple-100 font-medium"
+                              : "bg-slate-900/40 border-slate-800 text-slate-500 line-through opacity-60"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            disabled={userRole !== 'admin'}
+                            onChange={() => toggleAttendance(name, true)}
+                            className="rounded border-purple-600 text-purple-600 focus:ring-purple-500 w-3 h-3 bg-slate-900 cursor-pointer shrink-0"
+                          />
+                          <span>{name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Support Shift Roll Call */}
+                <div className="bg-slate-950/60 border border-blue-900/40 p-2 rounded-lg">
+                  <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/80">
+                    <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                      {supportShift}支援 (加班出勤 {supportCheckedCount} 人)
+                    </span>
+                    {userRole === 'admin' && (
+                      <div className="space-x-1 text-[10px]">
+                        <button onClick={selectAllSupport} className="text-blue-400 hover:text-blue-200 underline">全選</button>
+                        <span className="text-slate-600">|</span>
+                        <button onClick={deselectAllSupport} className="text-slate-400 hover:text-slate-200 underline">全不選</button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-1.5">
+                    {currentSupportPool.map(name => {
+                      const isChecked = !!attendanceMap[name];
+                      return (
+                        <label
+                          key={name}
+                          className={`flex items-center justify-center space-x-1 px-1.5 py-1 rounded text-[11px] cursor-pointer border select-none transition whitespace-nowrap ${
+                            isChecked
+                              ? "bg-blue-950/70 border-blue-700/60 text-blue-100 font-medium"
+                              : "bg-slate-900/40 border-slate-800 text-slate-500 opacity-60"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            disabled={userRole !== 'admin'}
+                            onChange={() => toggleAttendance(name, false)}
+                            className="rounded border-blue-600 text-blue-600 focus:ring-blue-500 w-3 h-3 bg-slate-900 cursor-pointer shrink-0"
+                          />
+                          <span>{name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Bar */}
+            <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-lg flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow">
+              <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0">
+                <span className="text-xs font-medium text-slate-400 mr-1 whitespace-nowrap">類型篩選:</span>
+                <button
+                  onClick={() => setFilterType("ALL")}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition whitespace-nowrap ${
+                    filterType === "ALL" ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  }`}
+                >
+                  全部
+                </button>
+                {machineTypes.map(type => (
+                  <button
+                    key={type}
+                    onClick={() => setFilterType(type)}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition whitespace-nowrap ${
+                      filterType === type ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 flex-1 md:max-w-md">
+                <select
+                  value={filterStatus}
+                  onChange={e => setFilterStatus(e.target.value)}
+                  className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-blue-500"
+                >
+                  <option value="ALL">全部機況</option>
+                  {mStatusOptions.map(opt => (
+                    <option key={opt.id} value={opt.label}>{opt.label}</option>
+                  ))}
+                </select>
+
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    placeholder="搜尋機台或人員姓名..."
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-md pl-8 pr-3 py-1.5 focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                  />
+                  <div className="absolute left-2.5 top-2">
+                    <IconSearch />
+                  </div>
+                  {searchTerm && (
+                    <button 
+                      onClick={() => setSearchTerm("")}
+                      className="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-slate-200"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {}
+            <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                <div className="flex items-center space-x-3 flex-wrap gap-y-1">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                    <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                      機台動態看板
+                    </h2>
+                  </div>
+                  <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1.5 border transition ${
+                    unassignedPeople.length > 0 
+                      ? "bg-amber-950/80 text-amber-300 border-amber-700/60" 
+                      : "bg-emerald-950/80 text-emerald-300 border-emerald-700/60"
+                  }`}>
+                    <span>👥 未安排工作人數:</span>
+                    <strong className="font-bold text-sm">{unassignedPeople.length}</strong> 人
+                    {unassignedPeople.length > 0 && (
+                      <span className="text-[11px] opacity-80 font-normal">
+                        ({unassignedPeople.join("、")})
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400">
+                  {userRole === 'admin' 
+                    ? '💡 提示：點擊操作員/預備員/機況/料況欄位即可快速設定'
+                    : '👁️ 檢視模式：現場實時一面看板總覽'}
+                </div>
+              </div>
+
+              {(() => {
+                let split = Math.ceil(filteredMachines.length / 2);
+                while (split < filteredMachines.length) {
+                  const m = filteredMachines[split];
+                  const group = REWINDER_GROUPS.find(g => g.members.includes(m.name));
+                  if (!group) break;
+                  const groupMachinesInView = filteredMachines.filter(item => group.members.includes(item.name));
+                  if (groupMachinesInView[0].id === m.id) break;
+                  split++;
+                }
+
+                const leftMachines = filteredMachines.slice(0, split);
+                const rightMachines = filteredMachines.slice(split);
+
+                const renderTable = (subMachines) => (
+                  <div className="flex-1 overflow-hidden border border-slate-800/80 rounded-lg bg-slate-950/40 flex flex-col">
+                    <div className="overflow-y-auto flex-1">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="bg-slate-950 text-slate-300 text-[11px] sticky top-0 z-10 shadow border-b border-slate-800">
+                          <tr>
+                            <th className="p-1.5 font-semibold w-16">類型</th>
+                            <th className="p-1.5 font-semibold w-14">機台</th>
+                            <th className="p-1.5 font-semibold">操作員</th>
+                            <th className="p-1.5 font-semibold">預備員</th>
+                            <th className="p-1.5 font-semibold w-24">機況</th>
+                            <th className="p-1.5 font-semibold w-24">料況</th>
+                            {userRole === 'admin' && (
+                              <th className="p-1.5 font-semibold w-7 text-center">刪</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-[11px]">
+                          {subMachines.length === 0 ? (
+                            <tr>
+                              <td colSpan={userRole === 'admin' ? 7 : 6} className="text-center py-6 text-slate-500">
+                                無機台資料
+                              </td>
+                            </tr>
+                          ) : (
+                            subMachines.map((machine) => {
+                              const mOpt = mStatusOptions.find(o => o.label === machine.mStatus) || mStatusOptions[0] || { color: "bg-slate-800 text-slate-300 border-slate-700", badge: "bg-slate-400" };
+                              const matOpt = matStatusOptions.find(o => o.label === machine.matStatus);
+
+                              const group = REWINDER_GROUPS.find(g => g.members.includes(machine.name));
+                              let isGroupFirst = true;
+                              let groupSpan = 1;
+
+                              if (group) {
+                                const groupMachinesInView = subMachines.filter(m => group.members.includes(m.name));
+                                if (groupMachinesInView.length > 0) {
+                                  isGroupFirst = (machine.id === groupMachinesInView[0].id);
+                                  groupSpan = groupMachinesInView.length;
+                                }
+                              }
+
+                              return (
+                                <tr key={machine.id} className="hover:bg-slate-800/40 transition">
+                                  <td className="p-1.5">
+                                    {machine.type ? (
+                                      <span className="bg-slate-800 text-slate-300 border border-slate-700 px-1 py-0.5 rounded text-[10px] font-medium whitespace-nowrap">
+                                        {machine.type}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-600 text-[10px] px-1">-</span>
+                                    )}
+                                  </td>
+
+                                  <td className="p-1.5">
+                                    <span className="font-bold text-slate-100 text-xs">
+                                      {machine.name}
+                                    </span>
+                                  </td>
+
+                                  {isGroupFirst && (
+                                    <td 
+                                      rowSpan={groupSpan}
+                                      className="p-1 border border-slate-800/80 rounded transition align-middle bg-slate-900/40 cursor-pointer"
+                                      onClick={userRole === 'admin' ? () => setAssignModal({ open: true, machineId: machine.id, role: "operator" }) : undefined}
+                                    >
+                                      {groupSpan > 1 && (
+                                        <div className="text-[9px] text-blue-400 font-semibold mb-0.5 pb-0.5 border-b border-blue-900/40 flex items-center justify-between">
+                                          <span>🔗 {group ? group.name.split(' ')[0] : '組別共用'}</span>
+                                          <span className="text-slate-400 font-normal">({groupSpan}機)</span>
+                                        </div>
+                                      )}
+                                      {machine.operator ? (
+                                        <div className="bg-gradient-to-r from-blue-900/90 to-indigo-900/90 border border-blue-500/60 text-blue-100 px-1.5 py-0.5 rounded flex items-center justify-between group shadow">
+                                          <span className="font-semibold flex items-center text-[11px]">
+                                            <IconUser /> {machine.operator}
+                                          </span>
+                                          {userRole === 'admin' && (
+                                            <button 
+                                              onClick={e => handleRemovePersonnel(machine.id, "operator", e)}
+                                              className="text-blue-300 hover:text-white ml-1 opacity-70 group-hover:opacity-100 font-bold text-xs"
+                                              title="移除指派"
+                                            >
+                                              ✕
+                                            </button>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <div className={`border border-dashed border-slate-800 text-slate-500 py-1 px-1 rounded text-center text-[10px] font-medium ${userRole === 'admin' ? 'hover:border-blue-500' : ''}`}>
+                                          {userRole === 'admin' ? `+ ${groupSpan > 1 ? '組別操作員' : '指派'}` : '未指派'}
+                                        </div>
+                                      )}
+                                    </td>
+                                  )}
+
+                                  {isGroupFirst && (
+                                    <td 
+                                      rowSpan={groupSpan}
+                                      className="p-1 border border-slate-800/80 rounded transition align-middle bg-slate-900/40 cursor-pointer"
+                                      onClick={userRole === 'admin' ? () => setAssignModal({ open: true, machineId: machine.id, role: "backup" }) : undefined}
+                                    >
+                                      {groupSpan > 1 && (
+                                        <div className="text-[9px] text-purple-400 font-semibold mb-0.5 pb-0.5 border-b border-purple-900/40 flex items-center justify-between">
+                                          <span>🔗 {group ? group.name.split(' ')[0] : '組別共用'}</span>
+                                          <span className="text-slate-400 font-normal">({groupSpan}機)</span>
+                                        </div>
+                                      )}
+                                      {machine.backup ? (
+                                        <div className="bg-slate-800 border border-purple-500/50 text-purple-200 px-1.5 py-0.5 rounded flex items-center justify-between group shadow">
+                                          <span className="font-medium flex items-center text-[11px]">
+                                            <IconUser /> {machine.backup}
+                                          </span>
+                                          {userRole === 'admin' && (
+                                            <button 
+                                              onClick={e => handleRemovePersonnel(machine.id, "backup", e)}
+                                              className="text-purple-300 hover:text-white ml-1 opacity-70 group-hover:opacity-100 font-bold text-xs"
+                                              title="移除指派"
+                                            >
+                                              ✕
+                                            </button>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <div className={`border border-dashed border-slate-800 text-slate-500 py-1 px-1 rounded text-center text-[10px] font-medium ${userRole === 'admin' ? 'hover:border-purple-500' : ''}`}>
+                                          {userRole === 'admin' ? `+ ${groupSpan > 1 ? '組別預備員' : '預備員'}` : '無'}
+                                        </div>
+                                      )}
+                                    </td>
+                                  )}
+
+                                  <td className="p-1.5">
+                                    {userRole === 'admin' ? (
+                                      <button 
+                                        onClick={() => {
+                                          setStatusModal({ open: true, machineId: machine.id, type: "mStatus" });
+                                          setIsManagingStatuses(false);
+                                        }}
+                                        className={`px-1.5 py-0.5 rounded border text-[11px] font-semibold w-full text-left flex items-center justify-between shadow-sm transition ${mOpt.color}`}
+                                      >
+                                        <span className="flex items-center truncate">
+                                          <span className={`w-1.5 h-1.5 rounded-full mr-1 shrink-0 ${mOpt.badge || 'bg-slate-400'}`}></span>
+                                          <span className="truncate">{machine.mStatus}</span>
+                                        </span>
+                                        <span className="text-[9px] opacity-70 shrink-0">▾</span>
+                                      </button>
+                                    ) : (
+                                      <div className={`px-1.5 py-0.5 rounded border text-[11px] font-semibold w-full flex items-center ${mOpt.color}`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full mr-1 shrink-0 ${mOpt.badge || 'bg-slate-400'}`}></span>
+                                        <span className="truncate">{machine.mStatus}</span>
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  <td className="p-1.5">
+                                    {userRole === 'admin' ? (
+                                      <button 
+                                        onClick={() => {
+                                          setStatusModal({ open: true, machineId: machine.id, type: "matStatus" });
+                                          setIsManagingStatuses(false);
+                                        }}
+                                        className={`px-1.5 py-0.5 rounded border text-[11px] font-semibold w-full text-left flex items-center justify-between shadow-sm transition ${
+                                          matOpt ? matOpt.color : "bg-slate-800/80 text-slate-400 border-slate-700 hover:border-slate-500 hover:text-slate-300"
+                                        }`}
+                                      >
+                                        <span className="truncate">
+                                          {machine.matStatus && matOpt ? `${matOpt.icon || ''} ${machine.matStatus}` : (machine.matStatus || "+ 料況")}
+                                        </span>
+                                        <span className="text-[9px] opacity-70 shrink-0">▾</span>
+                                      </button>
+                                    ) : (
+                                      <div className={`px-1.5 py-0.5 rounded border text-[11px] font-semibold w-full flex items-center ${
+                                        matOpt ? matOpt.color : "bg-slate-800/40 text-slate-500 border-slate-800"
+                                      }`}>
+                                        <span className="truncate">
+                                          {machine.matStatus && matOpt ? `${matOpt.icon || ''} ${machine.matStatus}` : (machine.matStatus || "-")}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {userRole === 'admin' && (
+                                    <td className="p-1 text-center">
+                                      <button
+                                        onClick={() => {
+                                          setConfirmDialog({
+                                            open: true,
+                                            title: "刪除機台確認",
+                                            message: `確定要刪除機台 [${machine.name}] 嗎？`,
+                                            onConfirm: () => {
+                                              const updated = machines.filter(m => m.id !== machine.id);
+                                              setMachines(updated);
+                                              pushToSupabase({ machines: updated });
+                                              showNotice(`已刪除機台 [${machine.name}]`, "info");
+                                            }
+                                          });
+                                        }}
+                                        className="text-slate-500 hover:text-red-400 p-0.5 rounded transition text-[11px]"
+                                        title="刪除機台"
+                                      >
+                                        🗑
+                                      </button>
+                                    </td>
+                                  )}
+
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+
+                return (
+                  <div className="flex-1 overflow-hidden mt-2 grid grid-cols-1 xl:grid-cols-2 gap-3 h-full">
+                    {renderTable(leftMachines)}
+                    {renderTable(rightMachines)}
+                  </div>
+                );
+              })()}
+
+            </div>
+
+          </main>
+
+          {}
+          {/* Confirmation Dialog */}
+          {confirmDialog.open && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+                <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                  ⚠️ {confirmDialog.title}
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  {confirmDialog.message}
+                </p>
+                <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
+                  <button
+                    onClick={() => setConfirmDialog({ open: false, title: "", message: "", onConfirm: null })}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3.5 py-1.5 rounded text-xs border border-slate-700"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirmDialog.onConfirm) confirmDialog.onConfirm();
+                      setConfirmDialog({ open: false, title: "", message: "", onConfirm: null });
+                    }}
+                    className="bg-rose-600 hover:bg-rose-500 text-white px-3.5 py-1.5 rounded text-xs font-semibold shadow"
+                  >
+                    確定執行
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Supabase Configuration & Setup Modal */}
+          {showSupabaseModal && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                    <IconCloud /> Supabase 雲端資料庫設定
+                  </h3>
+                  <button onClick={() => setShowSupabaseModal(false)} className="text-slate-400 hover:text-white font-bold">✕</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+                  <form onSubmit={handleSaveSupabaseCredentials} className="space-y-3">
+                    <div>
+                      <label className="block text-slate-300 font-semibold mb-1">1. Supabase Project URL</label>
+                      <input
+                        type="url"
+                        placeholder="https://xyzcompany.supabase.co"
+                        value={supabaseUrl}
+                        onChange={e => setSupabaseUrl(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none focus:border-blue-500 font-mono text-[11px]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-semibold mb-1">2. Supabase Anon API Key</label>
+                      <input
+                        type="password"
+                        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                        value={supabaseKey}
+                        onChange={e => setSupabaseKey(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none focus:border-blue-500 font-mono text-[11px]"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-semibold shadow"
+                    >
+                      儲存設定並連結 Supabase
+                    </button>
+                  </form>
+
+                  <div className="border-t border-slate-800 pt-3 space-y-2">
+                    <div className="font-bold text-amber-400 flex items-center gap-1">
+                      ⚡ Supabase 快速資料庫建立腳本 (SQL Editor)
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">
+                      複製下方 SQL 語法至 Supabase 儀表板中的 <strong>SQL Editor</strong> 執行，即可在 1 分鐘內建立跨裝置實時連線資料表：
+                    </p>
+                    <textarea
+                      readOnly
+                      value={SQL_SETUP_SCRIPT}
+                      className="w-full h-32 bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-[10px] p-2.5 rounded focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 flex justify-end shrink-0">
+                  <button
+                    onClick={() => setShowSupabaseModal(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-1.5 rounded text-xs border border-slate-700"
+                  >
+                    關閉視窗
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Quick Assign Personnel Modal */}
+          {assignModal.open && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-5 shadow-2xl">
+                {(() => {
+                  const targetM = machines.find(m => m.id === assignModal.machineId);
+                  const matchingGroups = targetM ? getMatchingSkillGroups(targetM.name) : [];
+                  const qualifiedMembersSet = new Set(matchingGroups.flatMap(g => g.members));
+
+                  return (
+                    <>
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                        <div>
+                          <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                            👤 快速指派{assignModal.role === "operator" ? "【操作員】" : "【預備員】"}
+                          </h3>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            機台：<span className="text-blue-300 font-bold">{targetM ? targetM.name : ''}</span>
+                            {matchingGroups.length > 0 ? (
+                              <span className="ml-2 text-purple-300 bg-purple-950/80 px-1.5 py-0.5 rounded border border-purple-800/60">
+                                技能分組：{matchingGroups.map(g => g.name).join(", ")}
+                              </span>
+                            ) : (
+                              <span className="ml-2 text-slate-500">(未設定技能分組)</span>
+                            )}
+                          </p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setAssignModal({ open: false, machineId: null, role: null });
+                            setAllowCrossGroup(false);
+                          }}
+                          className="text-slate-400 hover:text-white font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div className="py-3 space-y-3">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex space-x-1">
+                            <button
+                              onClick={() => setActiveTabPool("duty")}
+                              className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                                activeTabPool === "duty" ? "bg-purple-600 text-white font-bold" : "bg-slate-800 text-slate-400"
+                              }`}
+                            >
+                              {currentShift}當班
+                            </button>
+                            <button
+                              onClick={() => setActiveTabPool("support")}
+                              className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                                activeTabPool === "support" ? "bg-blue-600 text-white font-bold" : "bg-slate-800 text-slate-400"
+                              }`}
+                            >
+                              {supportShift}支援
+                            </button>
+                          </div>
+
+                          {matchingGroups.length > 0 && (
+                            <label className="flex items-center space-x-1 cursor-pointer text-[11px] text-amber-400 select-none bg-slate-950 px-2 py-1 rounded border border-amber-900/40">
+                              <input
+                                type="checkbox"
+                                checked={allowCrossGroup}
+                                onChange={e => setAllowCrossGroup(e.target.checked)}
+                                className="rounded border-amber-600 text-amber-600 w-3 h-3 bg-slate-900"
+                              />
+                              <span>開放跨組支援</span>
+                            </label>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-1">
+                          {(() => {
+                            const isDutyTab = activeTabPool === "duty";
+                            const activePool = isDutyTab ? currentDutyPool : currentSupportPool;
+                            const basePool = activePool.filter(person => isDutyTab ? attendanceMap[person] !== false : !!attendanceMap[person]);
+
+                            const hasGroupRestriction = matchingGroups.length > 0 && !allowCrossGroup;
+                            const availablePersons = hasGroupRestriction
+                              ? basePool.filter(person => qualifiedMembersSet.has(person))
+                              : basePool;
+
+                            if (availablePersons.length === 0) {
+                              return (
+                                <div className="col-span-3 text-center py-6 text-slate-400 text-xs bg-slate-950/60 rounded-lg p-3 border border-slate-800">
+                                  {hasGroupRestriction ? (
+                                    <>
+                                      ⚠️ 此組別無「已出勤」且「具操機資格」的人員<br/>
+                                      <span className="text-[10px] text-amber-400/90 block mt-1">
+                                        💡 可勾選右上角「開放跨組支援」或至「機台人員分組」調整資格
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      ⚠️ 此組別當前無出勤人員<br/>
+                                      <span className="text-[10px] text-slate-500">(請先於「現場出勤點名表」勾選出勤)</span>
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            }
+
+                            return availablePersons.map(person => {
+                              const statusInfo = assignedMap[person];
+                              const isQualified = qualifiedMembersSet.has(person);
+                              return (
+                                <button
+                                  key={person}
+                                  onClick={() => handleAssignPersonFromModal(person)}
+                                  className={`p-2 rounded-lg text-xs font-medium border text-center transition flex flex-col items-center justify-center relative ${
+                                    statusInfo 
+                                      ? "bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-800"
+                                      : isDutyTab
+                                        ? "bg-purple-950/60 border-purple-800/80 text-purple-200 hover:bg-purple-900/80"
+                                        : "bg-blue-950/60 border-blue-800/80 text-blue-200 hover:bg-blue-900/80"
+                                  }`}
+                                >
+                                  <span className="font-bold flex items-center gap-1">
+                                    {person}
+                                    {matchingGroups.length > 0 && isQualified && (
+                                      <span className="text-[9px] text-emerald-400" title="具備該機台操機資格">✓</span>
+                                    )}
+                                  </span>
+                                  {statusInfo ? (
+                                    <span className="text-[9px] text-slate-400 mt-0.5 truncate max-w-full">
+                                      已派: {statusInfo.machineName}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] text-emerald-400 mt-0.5">
+                                      可指派
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* Skill Groups Management Modal */}
+          {showGroupModal && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-3xl w-full p-5 shadow-2xl flex flex-col h-[90vh] max-h-[750px]">
+                
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-3 h-3 rounded-full bg-purple-500"></span>
+                    <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                      👥 機台與人員技能分組管理
+                      <span className="text-xs font-normal text-purple-300 bg-purple-950 border border-purple-800 px-2 py-0.5 rounded-full">
+                        {skillGroups.length} 組
+                      </span>
+                    </h3>
+                  </div>
+                  <button 
+                    onClick={() => setShowGroupModal(false)}
+                    className="text-slate-400 hover:text-white font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 py-4 min-h-0 overflow-hidden">
+                  
+                  {/* Left Column: Group List & Search */}
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-3 flex flex-col min-h-0">
+                    <div className="flex items-center justify-between mb-2 shrink-0">
+                      <span className="text-xs font-bold text-slate-300">技能分組清單</span>
+                      <button
+                        onClick={handleAddGroup}
+                        className="text-[11px] bg-purple-700 hover:bg-purple-600 text-white px-2 py-0.5 rounded font-medium flex items-center transition"
+                      >
+                        + 新增分組
+                      </button>
+                    </div>
+
+                    <div className="relative mb-2 shrink-0">
+                      <input
+                        type="text"
+                        placeholder="搜尋技能分組..."
+                        value={groupSearchTerm}
+                        onChange={e => setGroupSearchTerm(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded pl-7 pr-2 py-1 focus:outline-none focus:border-purple-500 placeholder-slate-500"
+                      />
+                      <div className="absolute left-2 top-1.5 text-slate-500">
+                        <IconSearch />
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 min-h-0">
+                      {filteredSkillGroups.length === 0 ? (
+                        <div className="text-center py-6 text-slate-500 text-xs">
+                          無符合分組
+                        </div>
+                      ) : (
+                        filteredSkillGroups.map(group => {
+                          const isSelected = selectedGroupId === group.id;
+                          return (
+                            <div
+                              key={group.id}
+                              onClick={() => setSelectedGroupId(group.id)}
+                              className={`p-2.5 rounded-lg border text-xs cursor-pointer transition flex items-center justify-between ${
+                                isSelected
+                                  ? "bg-purple-950/80 border-purple-500 text-purple-100 font-bold shadow"
+                                  : "bg-slate-900/60 border-slate-800 text-slate-300 hover:bg-slate-800"
+                              }`}
+                            >
+                              <div className="truncate mr-2">
+                                <div className="truncate">{group.name}</div>
+                                <div className="text-[10px] text-slate-500 font-normal mt-0.5">
+                                  機台:{group.machines ? group.machines.length : 0} | 人員:{group.members ? group.members.length : 0}
+                                </div>
+                              </div>
+                              {isSelected && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteGroup(group.id);
+                                  }}
+                                  className="text-slate-500 hover:text-red-400 p-1"
+                                  title="刪除此分組"
+                                >
+                                  🗑
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: Active Group Config Panel */}
+                  <div className="md:col-span-2 bg-slate-950/80 border border-slate-800 rounded-lg p-4 flex flex-col min-h-0 overflow-hidden">
+                    {(() => {
+                      const activeGroup = skillGroups.find(g => g.id === selectedGroupId);
+                      if (!activeGroup) {
+                        return (
+                          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 text-xs">
+                            請點選左側技能分組以進行編輯
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="flex-1 flex flex-col min-h-0 space-y-3 overflow-y-auto pr-1">
+                          
+                          <div>
+                            <label className="block text-xs font-bold text-slate-300 mb-1">分組名稱</label>
+                            <input
+                              type="text"
+                              value={activeGroup.name}
+                              onChange={e => handleUpdateGroupName(activeGroup.id, e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 text-slate-100 text-xs p-2 rounded focus:outline-none focus:border-purple-500"
+                            />
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-bold text-blue-300 flex items-center gap-1">
+                                ⚙️ 1. 涵蓋機台 ({activeGroup.machines ? activeGroup.machines.length : 0} 台)
+                              </span>
+                              <span className="text-[10px] text-slate-500">(勾選屬於此分組的機台)</span>
+                            </div>
+                            <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 bg-slate-900/60 p-2 rounded border border-slate-800 max-h-36 overflow-y-auto">
+                              {machines.map(m => {
+                                const isChecked = activeGroup.machines && activeGroup.machines.includes(m.name);
+                                return (
+                                  <label
+                                    key={m.id}
+                                    className={`flex items-center justify-between p-1 rounded text-[11px] cursor-pointer border transition select-none ${
+                                      isChecked
+                                        ? "bg-blue-950 border-blue-700 text-blue-200 font-medium"
+                                        : "bg-slate-950/60 border-slate-800/80 text-slate-500 opacity-70"
+                                    }`}
+                                  >
+                                    <span className="truncate">{m.name}</span>
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => handleToggleMachineInGroup(activeGroup.id, m.name)}
+                                      className="rounded border-blue-600 text-blue-600 focus:ring-blue-500 w-3 h-3 bg-slate-900"
+                                    />
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-bold text-purple-300 flex items-center gap-1">
+                                👤 2. 具備此分組操機資格之人員 ({activeGroup.members ? activeGroup.members.length : 0} 人)
+                              </span>
+                              <span className="text-[10px] text-slate-500">(勾選允許操作此組機台的人員)</span>
+                            </div>
+
+                            <div className="space-y-3 bg-slate-900/60 p-2.5 rounded border border-slate-800 max-h-56 overflow-y-auto">
+                              {[
+                                { shift: "S1", title: "S1班別名單", color: "text-amber-400", pool: poolS1 },
+                                { shift: "S2", title: "S2班別名單", color: "text-blue-400", pool: poolS2 },
+                                { shift: "S3", title: "S3班別名單", color: "text-emerald-400", pool: poolS3 },
+                                { shift: "S4", title: "S4班別名單", color: "text-purple-400", pool: poolS4 }
+                              ].map(({ shift, title, color, pool }) => (
+                                <div key={shift}>
+                                  <div className={`text-[10px] font-bold mb-1 border-b border-slate-800 pb-0.5 ${color}`}>
+                                    {title} ({shift === currentShift ? '⭐ 當班' : shift === supportShift ? '🤝 支援' : '一般'})
+                                  </div>
+                                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-1">
+                                    {pool.map(p => {
+                                      const isChecked = activeGroup.members && activeGroup.members.includes(p);
+                                      return (
+                                        <label
+                                          key={p}
+                                          className={`flex items-center justify-between p-1 rounded text-[11px] cursor-pointer border transition select-none ${
+                                            isChecked
+                                              ? "bg-purple-950 border-purple-700 text-purple-100 font-medium"
+                                              : "bg-slate-950/60 border-slate-800/80 text-slate-500 opacity-70"
+                                          }`}
+                                        >
+                                          <span>{p}</span>
+                                          <input
+                                            type="checkbox"
+                                            checked={isChecked}
+                                            onChange={() => handleToggleMemberInGroup(activeGroup.id, p)}
+                                            className="rounded border-purple-600 text-purple-600 focus:ring-purple-500 w-3 h-3 bg-slate-900"
+                                          />
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                </div>
+
+                <div className="pt-3 border-t border-slate-800 flex justify-end shrink-0">
+                  <button
+                    onClick={() => setShowGroupModal(false)}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-1.5 rounded-lg text-xs font-semibold shadow"
+                  >
+                    儲存並完成設定
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* Machine & Material Status Options Modal */}
+          {statusModal.open && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-5 shadow-2xl">
+                
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                    {statusModal.type === "mStatus" ? "變更【機況】狀態" : "變更【料況】狀態"}
+                  </h3>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setIsManagingStatuses(!isManagingStatuses)}
+                      className={`text-xs px-2.5 py-1 rounded border transition ${
+                        isManagingStatuses 
+                          ? "bg-blue-600 text-white border-blue-500 font-bold" 
+                          : "bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700"
+                      }`}
+                    >
+                      {isManagingStatuses ? "✓ 完成編輯" : "⚙️ 編輯/新增選項"}
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setStatusModal({ open: false, machineId: null, type: null });
+                        setIsManagingStatuses(false);
+                      }}
+                      className="text-slate-400 hover:text-white font-bold"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                {!isManagingStatuses ? (
+                  <div className="py-4 space-y-2 max-h-80 overflow-y-auto">
+                    {statusModal.type === "matStatus" && (
+                      <button
+                        onClick={() => handleSelectStatusFromModal("")}
+                        className="w-full p-2.5 rounded-lg border text-xs font-semibold flex items-center justify-between transition bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white"
+                      >
+                        <span>🚫 清空料況 (未設定)</span>
+                        <span>選擇</span>
+                      </button>
+                    )}
+                    
+                    {(statusModal.type === "mStatus" ? mStatusOptions : matStatusOptions).map(opt => (
+                      <button
+                        key={opt.id}
+                        onClick={() => handleSelectStatusFromModal(opt.label)}
+                        className={`w-full p-2.5 rounded-lg border text-xs font-semibold flex items-center justify-between transition ${opt.color}`}
+                      >
+                        <span className="flex items-center">
+                          {statusModal.type === "mStatus" ? (
+                            <span className={`w-2.5 h-2.5 rounded-full mr-2 ${opt.badge || 'bg-slate-400'}`}></span>
+                          ) : (
+                            <span className="mr-2 font-bold">{opt.icon || '✓'}</span>
+                          )}
+                          {opt.label}
+                        </span>
+                        <span>選擇</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-3 space-y-4">
+                    <p className="text-xs text-slate-400">
+                      在此可增設、變更或刪除系統中可供選擇的{statusModal.type === "mStatus" ? "「機況」" : "「料況」"}選項。
+                    </p>
+
+                    <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                      {(statusModal.type === "mStatus" ? mStatusOptions : matStatusOptions).map(opt => (
+                        <div key={opt.id} className="flex items-center justify-between bg-slate-950 p-2 rounded border border-slate-800">
+                          {editingStatusId === opt.id ? (
+                            <div className="flex items-center space-x-2 flex-1 mr-2">
+                              <input
+                                type="text"
+                                value={editingStatusLabel}
+                                onChange={e => setEditingStatusLabel(e.target.value)}
+                                className="flex-1 bg-slate-800 border border-slate-600 text-slate-200 text-xs px-2 py-1 rounded focus:outline-none"
+                              />
+                              <button
+                                onClick={() => handleSaveEditedStatusLabel(statusModal.type, opt.id)}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-2 py-1 rounded"
+                              >
+                                儲存
+                              </button>
+                            </div>
+                          ) : (
+                            <span className={`text-xs px-2.5 py-1 rounded border font-semibold ${opt.color}`}>
+                              {opt.icon ? `${opt.icon} ` : ""}{opt.label}
+                            </span>
+                          )}
+
+                          <div className="flex items-center space-x-1">
+                            {editingStatusId !== opt.id && (
+                              <button
+                                onClick={() => {
+                                  setEditingStatusId(opt.id);
+                                  setEditingStatusLabel(opt.label);
+                                }}
+                                className="text-slate-400 hover:text-slate-200 text-xs px-2 py-1 bg-slate-800 rounded border border-slate-700"
+                              >
+                                編輯
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDeleteStatusOption(statusModal.type, opt.id, opt.label)}
+                              className="text-rose-400 hover:text-rose-200 text-xs px-2 py-1 bg-slate-800 rounded border border-slate-700"
+                            >
+                              刪除
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-800">
+                      <div className="text-xs font-semibold text-slate-300 mb-2">➕ 新增狀態選項</div>
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          placeholder="請輸入狀態名稱..."
+                          value={newStatusForm.label}
+                          onChange={e => setNewStatusForm({ ...newStatusForm, label: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-700 text-slate-200 text-xs p-2 rounded focus:outline-none placeholder-slate-500"
+                        />
+                        <div className="flex items-center justify-between gap-2">
+                          <select
+                            value={newStatusForm.colorIndex}
+                            onChange={e => setNewStatusForm({ ...newStatusForm, colorIndex: parseInt(e.target.value) })}
+                            className="bg-slate-950 border border-slate-700 text-slate-200 text-xs p-2 rounded flex-1 focus:outline-none"
+                          >
+                            {COLOR_THEMES.map((theme, idx) => (
+                              <option key={idx} value={idx}>{theme.label}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => handleCreateStatusOption(statusModal.type)}
+                            className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded"
+                          >
+                            新增選項
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+
+              </div>
+            </div>
+          )}
+
+          {/* Export Report Modal */}
+          {showExportModal && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-2xl w-full p-5 shadow-2xl flex flex-col max-h-[90vh]">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <h3 className="text-base font-bold text-slate-100 flex items-center">
+                    📋 現場排班概況與機況總覽
+                  </h3>
+                  <button onClick={() => setShowExportModal(false)} className="text-slate-400 hover:text-white font-bold">✕</button>
+                </div>
+
+                <div className="py-4 flex-1 overflow-hidden flex flex-col">
+                  <p className="text-xs text-slate-400 mb-2">
+                    可複製下列格式化文字，快速貼至 LINE/Teams 等通訊軟體進行會報：
+                  </p>
+                  <textarea
+                    readOnly
+                    value={generateReportText()}
+                    className="flex-1 w-full bg-slate-950 border border-slate-800 text-slate-300 font-mono text-xs p-3 rounded-lg focus:outline-none resize-none min-h-[250px]"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
+                  <button
+                    onClick={() => setShowExportModal(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-md border border-slate-700"
+                  >
+                    關閉
+                  </button>
+                  <button
+                    onClick={handleCopyToClipboard}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-4 py-2 rounded-md font-semibold flex items-center shadow"
+                  >
+                    <IconClipboard /> 一鍵複製概況表
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Add Machine Modal */}
+          {showAddModal && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-5 shadow-2xl">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <h3 className="text-base font-bold text-slate-100">
+                    ➕ 新增機台
+                  </h3>
+                  <button 
+                    onClick={() => {
+                      setShowAddModal(false);
+                      setIsManagingTypes(false);
+                    }}
+                    className="text-slate-400 hover:text-white font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {!isManagingTypes ? (
+                  <form onSubmit={handleCreateMachine} className="py-4 space-y-3 text-xs">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-slate-400 font-medium">1. 機台類型</label>
+                        <button
+                          type="button"
+                          onClick={() => setIsManagingTypes(true)}
+                          className="text-[11px] text-blue-400 hover:text-blue-300 underline font-medium"
+                        >
+                          ⚙️ 管理機台類型選項
+                        </button>
+                      </div>
+                      <select
+                        value={newMachine.type}
+                        onChange={e => setNewMachine({ ...newMachine, type: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none"
+                      >
+                        <option value="">(無類型/通用)</option>
+                        {machineTypes.map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-400 mb-1 font-medium">2. 機台名稱 / 代號</label>
+                      <input
+                        type="text"
+                        placeholder="例如: W50, RW20..."
+                        required
+                        value={newMachine.name}
+                        onChange={e => setNewMachine({ ...newMachine, name: e.target.value })}
+                        className="w-full bg-slate-800 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none placeholder-slate-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-slate-400 mb-1 font-medium">初始機況</label>
+                        <select
+                          value={newMachine.mStatus}
+                          onChange={e => setNewMachine({ ...newMachine, mStatus: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none"
+                        >
+                          {mStatusOptions.map(o => (
+                            <option key={o.id} value={o.label}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-400 mb-1 font-medium">初始料況</label>
+                        <select
+                          value={newMachine.matStatus}
+                          onChange={e => setNewMachine({ ...newMachine, matStatus: e.target.value })}
+                          className="w-full bg-slate-800 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none"
+                        >
+                          <option value="">(未設定)</option>
+                          {matStatusOptions.map(o => (
+                            <option key={o.id} value={o.label}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddModal(false)}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded border border-slate-700"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="submit"
+                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-semibold"
+                      >
+                        新增機台
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="py-4 space-y-4 text-xs">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                      <span className="font-bold text-slate-200">⚙️ 機台類型列表管理</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsManagingTypes(false)}
+                        className="text-blue-400 hover:text-blue-300 underline font-medium"
+                      >
+                        ← 返回新增機台
+                      </button>
+                    </div>
+
+                    <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                      {machineTypes.map((type, index) => (
+                        <div key={index} className="flex items-center justify-between bg-slate-950 p-2 rounded border border-slate-800">
+                          {editingTypeIndex === index ? (
+                            <div className="flex items-center space-x-2 flex-1 mr-2">
+                              <input
+                                type="text"
+                                value={editingTypeValue}
+                                onChange={e => setEditingTypeValue(e.target.value)}
+                                className="flex-1 bg-slate-800 border border-slate-600 text-slate-200 text-xs px-2 py-1 rounded focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveEditMachineType(index)}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-2.5 py-1 rounded font-medium"
+                              >
+                                儲存
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="font-bold text-slate-200 px-2 py-0.5 bg-slate-800 rounded border border-slate-700">
+                              {type}
+                            </span>
+                          )}
+
+                          <div className="flex items-center space-x-1">
+                            {editingTypeIndex !== index && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingTypeIndex(index);
+                                  setEditingTypeValue(type);
+                                }}
+                                className="text-slate-400 hover:text-slate-200 text-xs px-2 py-1 bg-slate-800 rounded border border-slate-700"
+                              >
+                                編輯
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMachineType(type)}
+                              className="text-rose-400 hover:text-rose-200 text-xs px-2 py-1 bg-slate-800 rounded border border-slate-700"
+                            >
+                              刪除
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-800">
+                      <label className="block text-slate-300 font-semibold mb-1">➕ 新增機台類型</label>
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="text"
+                          placeholder="例如: 裁切機, 塗布機..."
+                          value={newTypeName}
+                          onChange={e => setNewTypeName(e.target.value)}
+                          className="flex-1 bg-slate-950 border border-slate-700 text-slate-200 text-xs p-2 rounded focus:outline-none placeholder-slate-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddMachineType}
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded"
+                        >
+                          新增類型
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsManagingTypes(false)}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-1.5 rounded text-xs border border-slate-700"
+                      >
+                        完成返回
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          )}
+
+          {/* Password Change Modal */}
+          {showChangePwModal && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-5 shadow-2xl">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                    🔒 修改管理員密碼
+                  </h3>
+                  <button 
+                    onClick={() => {
+                      setShowChangePwModal(false);
+                      setPwError("");
+                    }}
+                    className="text-slate-400 hover:text-white font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+                
+                <form onSubmit={handleChangePassword} className="py-4 space-y-3 text-xs">
+                  <div>
+                    <label className="block text-slate-400 mb-1 font-medium">1. 原密碼</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="請輸入目前密碼"
+                      value={pwForm.oldPw}
+                      onChange={e => setPwForm({ ...pwForm, oldPw: e.target.value })}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-400 mb-1 font-medium">2. 新密碼</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="請輸入新密碼 (至少 4 位)"
+                      value={pwForm.newPw}
+                      onChange={e => setPwForm({ ...pwForm, newPw: e.target.value })}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-400 mb-1 font-medium">3. 確認新密碼</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="請再次輸入新密碼"
+                      value={pwForm.confirmPw}
+                      onChange={e => setPwForm({ ...pwForm, confirmPw: e.target.value })}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none"
+                    />
+                  </div>
+
+                  {pwError && (
+                    <div className="text-[11px] text-rose-400 font-medium pt-1">
+                      ⚠️ {pwError}
+                    </div>
+                  )}
+
+                  <div className="pt-3 border-t border-slate-800 flex justify-end space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowChangePwModal(false);
+                        setPwError("");
+                      }}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded border border-slate-700"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="submit"
+                      className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded font-semibold"
+                    >
+                      確認更新密碼
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Footer */}
+          <footer className="bg-slate-950 border-t border-slate-900 py-3 text-center text-xs text-slate-500">
+          </footer>
+
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
