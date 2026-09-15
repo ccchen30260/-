@@ -49,6 +49,10 @@
   <div id="root"></div>
 
   <script type="text/babel">
+    // 🛠️ 填寫說明：請在下方雙引號內直接貼上您的 Supabase 設定（填寫後推送至 GitHub，所有裝置開啟網頁將自動連線）
+    const DEFAULT_SUPABASE_URL = "https://caqltzearteibmlkvolp.supabase.co"; // 👈 範例: "https://xyzcompany.supabase.co"
+    const DEFAULT_SUPABASE_KEY = "sb_publishable_YOmreGGe7GD6rjFzuQAeuQ_MMnrPIS0"; // 👈 範例: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
     const { useState, useEffect, useMemo, useRef } = React;
 
     const IconPlus = () => (
@@ -236,8 +240,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
     function App() {
       // Supabase State
-      const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("mfg_supabase_url") || "");
-      const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem("mfg_supabase_key") || "");
+      const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("mfg_supabase_url") || DEFAULT_SUPABASE_URL || "");
+      const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem("mfg_supabase_key") || DEFAULT_SUPABASE_KEY || "");
       const [supabaseConnected, setSupabaseConnected] = useState(false);
       const [showSupabaseModal, setShowSupabaseModal] = useState(false);
       const supabaseRef = useRef(null);
