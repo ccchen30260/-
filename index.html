@@ -301,7 +301,7 @@
       const [realtimeMode, setRealtimeMode] = useState("HTTP 輪詢模式");
       const supabaseRef = useRef(null);
 
-      // App Core States
+      // App Core Data States
       const [machines, setMachines] = useState(() => {
         const saved = localStorage.getItem("mfg_board_machines_v8");
         return saved ? JSON.parse(saved) : DEFAULT_MACHINES;
@@ -331,6 +331,71 @@
 
       const [scheduledShifts, setScheduledShifts] = useState({});
 
+      // Auth & Role State
+      const [userRole, setUserRole] = useState(null);
+      const [adminPassword, setAdminPassword] = useState(() => {
+        return localStorage.getItem("mfg_board_admin_pw_v3") || "0000";
+      });
+      const [inputPassword, setInputPassword] = useState("");
+      const [loginError, setLoginError] = useState("");
+
+      const [showChangePwModal, setShowChangePwModal] = useState(false);
+      const [pwForm, setPwForm] = useState({ oldPw: "", newPw: "", confirmPw: "" });
+      const [pwError, setPwError] = useState("");
+
+      // Guard & Prompt state
+      const [savedSnapshot, setSavedSnapshot] = useState("");
+      const [unsavedPrompt, setUnsavedPrompt] = useState({ open: false, actionType: null, targetValue: null });
+      const [confirmDialog, setConfirmDialog] = useState({ open: false, title: "", message: "", onConfirm: null });
+
+      // Filters & Toolbar States
+      const [filterType, setFilterType] = useState("ALL");
+      const [filterStatus, setFilterStatus] = useState("ALL");
+      const [searchTerm, setSearchTerm] = useState("");
+      const [groupSearchTerm, setGroupSearchTerm] = useState("");
+      const [activeTabPool, setActiveTabPool] = useState("duty");
+      const [noticeMessage, setNoticeMessage] = useState(null);
+
+      // Skill Groups State
+      const [skillGroups, setSkillGroups] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_skill_groups_v4");
+        return saved ? JSON.parse(saved) : DEFAULT_SKILL_GROUPS;
+      });
+      const [showGroupModal, setShowGroupModal] = useState(false);
+      const [selectedGroupId, setSelectedGroupId] = useState(null);
+      const [allowCrossGroup, setAllowCrossGroup] = useState(false);
+
+      // Attendance State
+      const [attendanceMap, setAttendanceMap] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_attendance_v6");
+        return saved ? JSON.parse(saved) : {};
+      });
+
+      // Modal & Editing states
+      const [assignModal, setAssignModal] = useState({ open: false, machineId: null, role: null });
+      const [statusModal, setStatusModal] = useState({ open: false, machineId: null, type: null });
+      const [isManagingStatuses, setIsManagingStatuses] = useState(false);
+      const [editingStatusId, setEditingStatusId] = useState(null);
+      const [editingStatusLabel, setEditingStatusLabel] = useState("");
+      const [newStatusForm, setNewStatusForm] = useState({ label: "", colorIndex: 0 });
+
+      const [showExportModal, setShowExportModal] = useState(false);
+      const [showAddModal, setShowAddModal] = useState(false);
+      const [isManagingTypes, setIsManagingTypes] = useState(false);
+      const [editingTypeIndex, setEditingTypeIndex] = useState(null);
+      const [editingTypeValue, setEditingTypeValue] = useState("");
+      const [newTypeName, setNewTypeName] = useState("");
+      const [newMachine, setNewMachine] = useState({ type: INITIAL_MACHINE_TYPES[0] || "", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
+
+      const [currentTime, setCurrentTime] = useState(new Date().toLocaleString('zh-TW', { hour12: false }));
+
+      const currentScheduleKey = `${selectedDate}_${selectedShiftTime}`;
+
+      const isDirty = useMemo(() => {
+        if (!savedSnapshot) return false;
+        return JSON.stringify({ machines, attendanceMap }) !== savedSnapshot;
+      }, [machines, attendanceMap, savedSnapshot]);
+
       const getPersonScheduledShift = (squad, personName) => {
         const [y, m, d] = selectedDate.split('-').map(Number);
         const key = `${squad}_shift_${y}_${m}_${personName}_${d}`;
@@ -340,7 +405,6 @@
         return getDefaultShift(squad, y, m, d);
       };
 
-      // 計算動態依日期與日/夜班別產生的當班 Squad 與支援 Squad，保持全局嚴格同步
       const categorizedPersonnel = useMemo(() => {
         const [y, m, d] = selectedDate.split('-').map(Number);
         const duty = [];
@@ -371,17 +435,97 @@
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
-      const [skillGroups, setSkillGroups] = useState(() => {
-        const saved = localStorage.getItem("mfg_board_skill_groups_v4");
-        return saved ? JSON.parse(saved) : DEFAULT_SKILL_GROUPS;
-      });
+      const assignedMap = useMemo(() => {
+        const map = {};
+        machines.forEach(m => {
+          if (m.operator) map[m.operator] = { machineId: m.id, machineName: m.name, role: "操作員", type: m.type };
+          if (m.backup) map[m.backup] = { machineId: m.id, machineName: m.name, role: "預備員", type: m.type };
+        });
+        return map;
+      }, [machines]);
 
-      const [attendanceMap, setAttendanceMap] = useState(() => {
-        const saved = localStorage.getItem("mfg_board_attendance_v6");
-        return saved ? JSON.parse(saved) : {};
-      });
+      const dutyCheckedCount = useMemo(() => {
+        return categorizedPersonnel.duty.filter(item => {
+          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+          const sVal = item.schedShift;
+          return sVal && sVal !== '日' && sVal !== '夜' ? false : true;
+        }).length;
+      }, [categorizedPersonnel.duty, attendanceMap]);
 
-      // 當切換排班日期、日/夜班別，或是當 Supabase 排班資料載入時，自動更新現場點名表出勤狀態
+      const supportCheckedCount = useMemo(() => {
+        return categorizedPersonnel.support.filter(item => {
+          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+          const sVal = item.schedShift;
+          return sVal === 'G';
+        }).length;
+      }, [categorizedPersonnel.support, attendanceMap]);
+
+      const unassignedPeople = useMemo(() => {
+        const dutyPresent = categorizedPersonnel.duty.filter(item => {
+          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+          const sVal = item.schedShift;
+          return sVal && sVal !== '日' && sVal !== '夜' ? false : true;
+        }).map(i => i.name);
+
+        const supportPresent = categorizedPersonnel.support.filter(item => {
+          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+          const sVal = item.schedShift;
+          return sVal === 'G';
+        }).map(i => i.name);
+
+        const allPresent = [...dutyPresent, ...supportPresent];
+        return allPresent.filter(p => !assignedMap[p]);
+      }, [categorizedPersonnel, attendanceMap, assignedMap]);
+
+      const stats = useMemo(() => {
+        const expectedCount = categorizedPersonnel.duty.length;
+        const dutyActualCount = dutyCheckedCount;
+        const overtimeCount = supportCheckedCount;
+        const actualCount = dutyCheckedCount + supportCheckedCount;
+        const isCountedMachine = m => m.type !== "" || m.name === "折彎機";
+        const running = machines.filter(m => m.mStatus === "正常運轉" && isCountedMachine(m)).length;
+        const down = machines.filter(m => m.mStatus === "設備異常" && isCountedMachine(m)).length;
+        const maint = machines.filter(m => m.mStatus === "停機保養" && isCountedMachine(m)).length;
+        return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint };
+      }, [categorizedPersonnel.duty, dutyCheckedCount, supportCheckedCount, machines]);
+
+      const filteredMachines = useMemo(() => {
+        const query = searchTerm.trim().toLowerCase();
+        return machines.filter(m => {
+          const matchType = filterType === "ALL" || m.type === filterType;
+          const matchStatus = filterStatus === "ALL" || m.mStatus === filterStatus;
+          const matchSearch = !query || 
+            m.name.toLowerCase().includes(query) ||
+            m.type.toLowerCase().includes(query) ||
+            (m.operator && m.operator.toLowerCase().includes(query)) ||
+            (m.backup && m.backup.toLowerCase().includes(query));
+          return matchType && matchStatus && matchSearch;
+        });
+      }, [machines, filterType, filterStatus, searchTerm]);
+
+      const filteredSkillGroups = useMemo(() => {
+        if (!groupSearchTerm.trim()) return skillGroups;
+        const q = groupSearchTerm.trim().toLowerCase();
+        return skillGroups.filter(g => g.name.toLowerCase().includes(q));
+      }, [skillGroups, groupSearchTerm]);
+
+      useEffect(() => {
+        const timer = setInterval(() => {
+          setCurrentTime(new Date().toLocaleString('zh-TW', { hour12: false }));
+        }, 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      useEffect(() => {
+        localStorage.setItem("mfg_board_machines_v8", JSON.stringify(machines));
+        localStorage.setItem("mfg_board_machine_types_v3", JSON.stringify(machineTypes));
+        localStorage.setItem("mfg_board_mstatus_opt_v4", JSON.stringify(mStatusOptions));
+        localStorage.setItem("mfg_board_matstatus_opt_v4", JSON.stringify(matStatusOptions));
+        localStorage.setItem("mfg_board_skill_groups_v4", JSON.stringify(skillGroups));
+        localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
+        localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
+      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap, schedulesMap]);
+
       useEffect(() => {
         if (!selectedDate) return;
         const next = {};
@@ -400,74 +544,22 @@
         setAttendanceMap(next);
       }, [selectedDate, selectedShiftTime, scheduledShifts, categorizedPersonnel.dutySquad, categorizedPersonnel.supportSquad]);
 
-      const [showGroupModal, setShowGroupModal] = useState(false);
-      const [selectedGroupId, setSelectedGroupId] = useState(null);
-      const [allowCrossGroup, setAllowCrossGroup] = useState(false);
-
-      // Auth & Role state
-      const [userRole, setUserRole] = useState(null);
-      const [adminPassword, setAdminPassword] = useState(() => {
-        return localStorage.getItem("mfg_board_admin_pw_v3") || "0000";
-      });
-      const [inputPassword, setInputPassword] = useState("");
-      const [loginError, setLoginError] = useState("");
-
-      const [showChangePwModal, setShowChangePwModal] = useState(false);
-      const [pwForm, setPwForm] = useState({ oldPw: "", newPw: "", confirmPw: "" });
-      const [pwError, setPwError] = useState("");
-
-      const [confirmDialog, setConfirmDialog] = useState({ open: false, title: "", message: "", onConfirm: null });
-
-      // Filters & Search
-      const [filterType, setFilterType] = useState("ALL");
-      const [filterStatus, setFilterStatus] = useState("ALL");
-      const [searchTerm, setSearchTerm] = useState("");
-      const [groupSearchTerm, setGroupSearchTerm] = useState("");
-      const [activeTabPool, setActiveTabPool] = useState("duty");
-      const [noticeMessage, setNoticeMessage] = useState(null);
-
-      // Modals
-      const [assignModal, setAssignModal] = useState({ open: false, machineId: null, role: null });
-      const [statusModal, setStatusModal] = useState({ open: false, machineId: null, type: null });
-      const [isManagingStatuses, setIsManagingStatuses] = useState(false);
-      const [editingStatusId, setEditingStatusId] = useState(null);
-      const [editingStatusLabel, setEditingStatusLabel] = useState("");
-      const [newStatusForm, setNewStatusForm] = useState({ label: "", colorIndex: 0 });
-
-      const [showExportModal, setShowExportModal] = useState(false);
-      const [showAddModal, setShowAddModal] = useState(false);
-
-      // Machine Type Management
-      const [isManagingTypes, setIsManagingTypes] = useState(false);
-      const [editingTypeIndex, setEditingTypeIndex] = useState(null);
-      const [editingTypeValue, setEditingTypeValue] = useState("");
-      const [newTypeName, setNewTypeName] = useState("");
-
-      // New machine form
-      const [newMachine, setNewMachine] = useState({ type: "羅得B", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
-
-      // Time
-      const [currentTime, setCurrentTime] = useState(new Date().toLocaleString('zh-TW', { hour12: false }));
+      useEffect(() => {
+        if (!savedSnapshot) {
+          setSavedSnapshot(JSON.stringify({ machines, attendanceMap }));
+        }
+      }, [machines, attendanceMap, savedSnapshot]);
 
       useEffect(() => {
-        const timer = setInterval(() => {
-          setCurrentTime(new Date().toLocaleString('zh-TW', { hour12: false }));
-        }, 1000);
-        return () => clearInterval(timer);
-      }, []);
-
-      useEffect(() => {
-        localStorage.setItem("mfg_board_machines_v8", JSON.stringify(machines));
-        localStorage.setItem("mfg_board_machine_types_v3", JSON.stringify(machineTypes));
-        localStorage.setItem("mfg_board_mstatus_opt_v4", JSON.stringify(mStatusOptions));
-        localStorage.setItem("mfg_board_matstatus_opt_v4", JSON.stringify(matStatusOptions));
-        localStorage.setItem("mfg_board_skill_groups_v4", JSON.stringify(skillGroups));
-        localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
-      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap]);
-
-      useEffect(() => {
-        localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
-      }, [schedulesMap]);
+        const handleBeforeUnload = (e) => {
+          if (isDirty) {
+            e.preventDefault();
+            e.returnValue = '';
+          }
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+      }, [isDirty]);
 
       useEffect(() => {
         if (!supabaseUrl || !supabaseKey || !window.supabase) {
@@ -514,9 +606,7 @@
                 });
                 setSquadRosters(newRosters);
               }
-            } catch(e) {
-              console.warn("Error fetching settings from Supabase:", e);
-            }
+            } catch(e) {}
 
             try {
               const { data, error } = await client.from('mfg_board').select('*').eq('id', 'global_state').single();
@@ -539,7 +629,6 @@
                 setSupabaseConnected(true);
                 setSupabaseErrorMsg("");
               } else {
-                console.error("Supabase 資料讀取失敗：", e);
                 setSupabaseConnected(false);
                 setSupabaseErrorMsg((e && (e.message || e.hint || e.details)) || "無法連線至 Supabase");
               }
@@ -564,12 +653,9 @@
                   }
                 });
 
-              channel.subscribe((status, err) => {
-                if (status === 'SUBSCRIBED') {
-                  setRealtimeMode("WebSocket 實時");
-                } else {
-                  setRealtimeMode("HTTP 輪詢");
-                }
+              channel.subscribe((status) => {
+                if (status === 'SUBSCRIBED') setRealtimeMode("WebSocket 實時");
+                else setRealtimeMode("HTTP 輪詢");
               });
             } catch(wsErr) {
               setRealtimeMode("HTTP 輪詢");
@@ -593,12 +679,8 @@
                 if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
               }
               setSupabaseConnected(true);
-            } catch(pollErr) {
-              if (pollErr && pollErr.code !== 'PGRST116') {
-                console.error("輪詢 Supabase 失敗：", pollErr);
-              }
-            }
-          }, 5000);
+            } catch(pollErr) {}
+          }, 6000);
 
           return () => {
             if (channel) {
@@ -607,18 +689,35 @@
             if (pollingInterval) clearInterval(pollingInterval);
           };
         } catch(err) {
-          console.error("Failed to initialize Supabase:", err);
           setSupabaseConnected(false);
-          setSupabaseErrorMsg((err && err.message) || "初始化 Supabase 失敗");
+          setSupabaseErrorMsg((err && err.message) || "初始化 Supabase 用戶端失敗");
         }
       }, [supabaseUrl, supabaseKey]);
+
+      useEffect(() => {
+        if (!supabaseRef.current || !selectedDate) return;
+        const [y, m, d] = selectedDate.split('-').map(Number);
+        const loadShifts = async () => {
+          try {
+            const { data } = await supabaseRef.current
+              .from('shifts')
+              .select('key, value')
+              .like('key', `%_shift_${y}_${m}_%_${d}`);
+            if (data) {
+              const map = {};
+              data.forEach(r => { map[r.key] = r.value; });
+              setScheduledShifts(map);
+            }
+          } catch(err) {}
+        };
+        loadShifts();
+      }, [selectedDate, supabaseConnected]);
 
       const pushToSupabase = async (updatedFields) => {
         if (!supabaseRef.current) return;
         try {
           const payloadState = {
             machines,
-            currentShift,
             attendanceMap,
             machineTypes,
             skillGroups,
@@ -636,38 +735,132 @@
           setSupabaseConnected(true);
           setSupabaseErrorMsg("");
         } catch(err) {
-          console.error("Failed to push state to Supabase:", err);
           setSupabaseConnected(false);
           setSupabaseErrorMsg((err && (err.message || err.hint || err.details)) || "寫入 Supabase 失敗");
-          showNotice("⚠️ 雲端同步失敗，此變更僅儲存在本機", "error");
         }
       };
 
-      useEffect(() => {
-        if (!supabaseRef.current || !selectedDate) return;
-        const [y, m, d] = selectedDate.split('-').map(Number);
-        const loadShifts = async () => {
-          try {
-            const { data } = await supabaseRef.current
-              .from('shifts')
-              .select('key, value')
-              .like('key', `%_shift_${y}_${m}_%_${d}`);
-            if (data) {
-              const map = {};
-              data.forEach(r => { map[r.key] = r.value; });
-              setScheduledShifts(map);
-            }
-          } catch(err) {
-            console.error("Failed to load scheduled shifts:", err);
-          }
-        };
-        loadShifts();
-      }, [selectedDate, supabaseConnected]);
+      const handleSaveBoard = () => {
+        const currentSnap = { machines, attendanceMap };
+        const updatedMap = { ...schedulesMap, [currentScheduleKey]: currentSnap };
+        
+        setSchedulesMap(updatedMap);
+        setSavedSnapshot(JSON.stringify(currentSnap));
+
+        pushToSupabase({
+          schedulesMap: updatedMap,
+          machines: machines,
+          attendanceMap: attendanceMap
+        });
+
+        showNotice(`已成功儲存 [${selectedDate} ${selectedShiftTime}班] 的排班與機況看板變更！`, "success");
+      };
+
+      const performDateChange = (targetDate) => {
+        if (targetDate === selectedDate) return;
+
+        const targetKey = `${targetDate}_${selectedShiftTime}`;
+        const targetData = schedulesMap[targetKey] || schedulesMap[targetDate];
+        
+        let newMachines = machines;
+        let newAttendance = attendanceMap;
+
+        if (targetData) {
+          newMachines = targetData.machines || DEFAULT_MACHINES;
+          newAttendance = targetData.attendanceMap || {};
+        } else {
+          newMachines = DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" }));
+          newAttendance = {};
+        }
+
+        setMachines(newMachines);
+        setAttendanceMap(newAttendance);
+        setSavedSnapshot(JSON.stringify({ machines: newMachines, attendanceMap: newAttendance }));
+        setSelectedDate(targetDate);
+        showNotice(`已切換看板日期至 [${targetDate}]`, "info");
+      };
+
+      const requestDateChange = (targetDate) => {
+        if (targetDate === selectedDate) return;
+        if (isDirty) {
+          setUnsavedPrompt({ open: true, actionType: 'DATE', targetValue: targetDate });
+        } else {
+          performDateChange(targetDate);
+        }
+      };
+
+      const performShiftChange = (targetShift) => {
+        if (targetShift === selectedShiftTime) return;
+
+        const targetKey = `${selectedDate}_${targetShift}`;
+        const targetData = schedulesMap[targetKey];
+
+        let newMachines = machines;
+        let newAttendance = attendanceMap;
+
+        if (targetData) {
+          newMachines = targetData.machines || DEFAULT_MACHINES;
+          newAttendance = targetData.attendanceMap || {};
+        } else {
+          newMachines = machines;
+          newAttendance = attendanceMap;
+        }
+
+        setMachines(newMachines);
+        setAttendanceMap(newAttendance);
+        setSavedSnapshot(JSON.stringify({ machines: newMachines, attendanceMap: newAttendance }));
+        setSelectedShiftTime(targetShift);
+        showNotice(`已切換班別至 [${targetShift}班]`, "info");
+      };
+
+      const requestShiftChange = (targetShift) => {
+        if (targetShift === selectedShiftTime) return;
+        if (isDirty) {
+          setUnsavedPrompt({ open: true, actionType: 'SHIFT', targetValue: targetShift });
+        } else {
+          performShiftChange(targetShift);
+        }
+      };
+
+      const performLogout = () => {
+        setUserRole(null);
+        showNotice("已登出當前身份", "info");
+      };
+
+      const requestLogout = () => {
+        if (isDirty) {
+          setUnsavedPrompt({ open: true, actionType: 'LOGOUT', targetValue: null });
+        } else {
+          performLogout();
+        }
+      };
+
+      const handlePromptSaveAndProceed = () => {
+        handleSaveBoard();
+        const { actionType, targetValue } = unsavedPrompt;
+        setUnsavedPrompt({ open: false, actionType: null, targetValue: null });
+
+        if (actionType === 'DATE') performDateChange(targetValue);
+        else if (actionType === 'SHIFT') performShiftChange(targetValue);
+        else if (actionType === 'LOGOUT') performLogout();
+      };
+
+      const handlePromptDiscardAndProceed = () => {
+        const { actionType, targetValue } = unsavedPrompt;
+        setUnsavedPrompt({ open: false, actionType: null, targetValue: null });
+
+        if (actionType === 'DATE') performDateChange(targetValue);
+        else if (actionType === 'SHIFT') performShiftChange(targetValue);
+        else if (actionType === 'LOGOUT') performLogout();
+      };
+
+      const handlePromptCancel = () => {
+        setUnsavedPrompt({ open: false, actionType: null, targetValue: null });
+      };
 
       const handleLoadScheduleAttendance = () => {
         setAttendanceMap(prev => {
           const next = { ...prev };
-          
           categorizedPersonnel.duty.forEach(item => {
             const sVal = item.schedShift;
             const isLeave = sVal && sVal !== '日' && sVal !== '夜';
@@ -685,38 +878,12 @@
         showNotice(`已成功根據 [${selectedDate} ${selectedShiftTime}班] 排班表更新當班與 G 加班支援出勤狀態！`, "success");
       };
 
-      const handleDateChange = (targetDate) => {
-        if (targetDate === selectedDate) return;
-
-        const currentSnap = { machines, currentShift, attendanceMap };
-        const updatedMap = { ...schedulesMap, [selectedDate]: currentSnap };
-
-        const targetData = updatedMap[targetDate];
-        if (targetData) {
-          setMachines(targetData.machines || DEFAULT_MACHINES);
-          setAttendanceMap(targetData.attendanceMap || {});
-        } else {
-          setMachines(DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" })));
-          setAttendanceMap({});
-        }
-
-        setSchedulesMap(updatedMap);
-        pushToSupabase({
-          schedulesMap: updatedMap,
-          machines: currentSnap.machines,
-          attendanceMap: currentSnap.attendanceMap
-        });
-
-        setSelectedDate(targetDate);
-        showNotice(`已切換看板日期至 [${targetDate}]`, "info");
-      };
-
       const handleCopyScheduleFromToday = () => {
         if (selectedDate === todayStr) {
           showNotice("目前已是在今日排班！", "info");
           return;
         }
-        const todayData = schedulesMap[todayStr] || { machines, currentShift, attendanceMap };
+        const todayData = schedulesMap[todayStr] || { machines, attendanceMap };
         const copiedMachines = JSON.parse(JSON.stringify(todayData.machines || machines));
         const copiedAttendance = JSON.parse(JSON.stringify(todayData.attendanceMap || attendanceMap));
 
@@ -726,7 +893,7 @@
         setSchedulesMap(prev => {
           const updated = {
             ...prev,
-            [selectedDate]: { machines: copiedMachines, currentShift, attendanceMap: copiedAttendance }
+            [selectedDate]: { machines: copiedMachines, attendanceMap: copiedAttendance }
           };
           pushToSupabase({
             schedulesMap: updated,
@@ -905,15 +1072,6 @@
         });
       };
 
-      const assignedMap = useMemo(() => {
-        const map = {};
-        machines.forEach(m => {
-          if (m.operator) map[m.operator] = { machineId: m.id, machineName: m.name, role: "操作員", type: m.type };
-          if (m.backup) map[m.backup] = { machineId: m.id, machineName: m.name, role: "預備員", type: m.type };
-        });
-        return map;
-      }, [machines]);
-
       const toggleAttendance = (name, isDuty) => {
         setAttendanceMap(prev => {
           const itemObj = isDuty
@@ -992,71 +1150,6 @@
           return next;
         });
       };
-
-      const dutyCheckedCount = useMemo(() => {
-        return categorizedPersonnel.duty.filter(item => {
-          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          const sVal = item.schedShift;
-          return sVal && sVal !== '日' && sVal !== '夜' ? false : true;
-        }).length;
-      }, [categorizedPersonnel.duty, attendanceMap]);
-
-      const supportCheckedCount = useMemo(() => {
-        return categorizedPersonnel.support.filter(item => {
-          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          const sVal = item.schedShift;
-          return sVal === 'G';
-        }).length;
-      }, [categorizedPersonnel.support, attendanceMap]);
-
-      const unassignedPeople = useMemo(() => {
-        const dutyPresent = categorizedPersonnel.duty.filter(item => {
-          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          const sVal = item.schedShift;
-          return sVal && sVal !== '日' && sVal !== '夜' ? false : true;
-        }).map(i => i.name);
-
-        const supportPresent = categorizedPersonnel.support.filter(item => {
-          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          const sVal = item.schedShift;
-          return sVal === 'G';
-        }).map(i => i.name);
-
-        const allPresent = [...dutyPresent, ...supportPresent];
-        return allPresent.filter(p => !assignedMap[p]);
-      }, [categorizedPersonnel, attendanceMap, assignedMap]);
-
-      const stats = useMemo(() => {
-        const expectedCount = categorizedPersonnel.duty.length;
-        const dutyActualCount = dutyCheckedCount;
-        const overtimeCount = supportCheckedCount;
-        const actualCount = dutyCheckedCount + supportCheckedCount;
-        const isCountedMachine = m => m.type !== "" || m.name === "折彎機";
-        const running = machines.filter(m => m.mStatus === "正常運轉" && isCountedMachine(m)).length;
-        const down = machines.filter(m => m.mStatus === "設備異常" && isCountedMachine(m)).length;
-        const maint = machines.filter(m => m.mStatus === "停機保養" && isCountedMachine(m)).length;
-        return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint };
-      }, [categorizedPersonnel.duty, dutyCheckedCount, supportCheckedCount, machines]);
-
-      const filteredMachines = useMemo(() => {
-        const query = searchTerm.trim().toLowerCase();
-        return machines.filter(m => {
-          const matchType = filterType === "ALL" || m.type === filterType;
-          const matchStatus = filterStatus === "ALL" || m.mStatus === filterStatus;
-          const matchSearch = !query || 
-            m.name.toLowerCase().includes(query) ||
-            m.type.toLowerCase().includes(query) ||
-            (m.operator && m.operator.toLowerCase().includes(query)) ||
-            (m.backup && m.backup.toLowerCase().includes(query));
-          return matchType && matchStatus && matchSearch;
-        });
-      }, [machines, filterType, filterStatus, searchTerm]);
-
-      const filteredSkillGroups = useMemo(() => {
-        if (!groupSearchTerm.trim()) return skillGroups;
-        const q = groupSearchTerm.trim().toLowerCase();
-        return skillGroups.filter(g => g.name.toLowerCase().includes(q));
-      }, [skillGroups, groupSearchTerm]);
 
       const handleRemovePersonnel = (machineId, role, e) => {
         if (e) e.stopPropagation();
@@ -1370,6 +1463,17 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 {userRole === 'admin' && (
                   <>
                     <button 
+                      onClick={handleSaveBoard}
+                      className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center transition shadow ${
+                        isDirty 
+                          ? "bg-amber-600 hover:bg-amber-500 text-white animate-pulse border border-amber-400" 
+                          : "bg-emerald-700 hover:bg-emerald-600 text-emerald-100 border border-emerald-500"
+                      }`}
+                      title={isDirty ? "有未儲存的變更，點擊儲存" : "看板已是最新狀態"}
+                    >
+                      {isDirty ? "💾 儲存看板 (未儲存)" : "✓ 已儲存"}
+                    </button>
+                    <button 
                       onClick={() => {
                         setIsManagingTypes(false);
                         setShowAddModal(true);
@@ -1412,10 +1516,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 )}
 
                 <button
-                  onClick={() => {
-                    setUserRole(null);
-                    showNotice("已登出當前身份", "info");
-                  }}
+                  onClick={requestLogout}
                   className="bg-slate-800 hover:bg-slate-700 text-rose-300 border border-rose-900/60 px-3 py-1.5 rounded-md text-xs font-medium transition"
                 >
                   🚪 {userRole === 'admin' ? '登出' : '切換身份'}
@@ -1451,14 +1552,14 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 <input
                   type="date"
                   value={selectedDate}
-                  onChange={e => handleDateChange(e.target.value)}
+                  onChange={e => requestDateChange(e.target.value)}
                   className="bg-slate-950 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded-md focus:outline-none focus:border-blue-500 font-mono"
                 />
 
                 <div className="flex items-center space-x-1 border-l border-slate-800 pl-2 ml-1">
                   <span className="text-xs font-bold text-slate-300 whitespace-nowrap">班別:</span>
                   <button
-                    onClick={() => setSelectedShiftTime("日")}
+                    onClick={() => requestShiftChange("日")}
                     className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1 ${
                       selectedShiftTime === "日"
                         ? "bg-amber-500 text-slate-950 shadow-md scale-105"
@@ -1468,7 +1569,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     ☀️ 日班
                   </button>
                   <button
-                    onClick={() => setSelectedShiftTime("夜")}
+                    onClick={() => requestShiftChange("夜")}
                     className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1 ${
                       selectedShiftTime === "夜"
                         ? "bg-indigo-600 text-white shadow-md scale-105"
@@ -1481,7 +1582,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                 <div className="flex items-center space-x-1 pl-1">
                   <button
-                    onClick={() => handleDateChange(todayStr)}
+                    onClick={() => requestDateChange(todayStr)}
                     className={`px-2.5 py-1 rounded text-xs font-bold transition whitespace-nowrap ${
                       selectedDate === todayStr
                         ? "bg-blue-600 text-white shadow-md"
@@ -1491,7 +1592,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     今天
                   </button>
                   <button
-                    onClick={() => handleDateChange(getOffsetDateStr(todayStr, 1))}
+                    onClick={() => requestDateChange(getOffsetDateStr(todayStr, 1))}
                     className={`px-2.5 py-1 rounded text-xs font-bold transition whitespace-nowrap ${
                       selectedDate === getOffsetDateStr(todayStr, 1)
                         ? "bg-blue-600 text-white shadow-md"
@@ -1501,7 +1602,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     明天
                   </button>
                   <button
-                    onClick={() => handleDateChange(getOffsetDateStr(todayStr, 2))}
+                    onClick={() => requestDateChange(getOffsetDateStr(todayStr, 2))}
                     className={`px-2.5 py-1 rounded text-xs font-bold transition whitespace-nowrap ${
                       selectedDate === getOffsetDateStr(todayStr, 2)
                         ? "bg-blue-600 text-white shadow-md"
@@ -1515,13 +1616,15 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
               <div className="flex items-center space-x-2 w-full sm:w-auto justify-between sm:justify-end">
                 <span className={`text-xs px-2.5 py-1 rounded-full font-bold border flex items-center gap-1.5 ${
-                  selectedDate === todayStr
-                    ? "bg-emerald-950 text-emerald-300 border-emerald-700"
-                    : selectedDate > todayStr
-                      ? "bg-purple-950 text-purple-300 border-purple-700"
-                      : "bg-slate-800 text-slate-400 border-slate-700"
+                  isDirty
+                    ? "bg-amber-950 text-amber-300 border-amber-600 animate-pulse"
+                    : selectedDate === todayStr
+                      ? "bg-emerald-950 text-emerald-300 border-emerald-700"
+                      : selectedDate > todayStr
+                        ? "bg-purple-950 text-purple-300 border-purple-700"
+                        : "bg-slate-800 text-slate-400 border-slate-700"
                 }`}>
-                  <span>{selectedDate === todayStr ? `🟢 今日 ${selectedShiftTime}班 (${currentShift})` : selectedDate > todayStr ? `🔮 未來 ${selectedShiftTime}班 (${currentShift})` : `📜 歷史 ${selectedShiftTime}班 (${currentShift})`}</span>
+                  <span>{isDirty ? `⚠️ [未儲存] ${selectedDate} ${selectedShiftTime}班` : selectedDate === todayStr ? `🟢 今日 ${selectedShiftTime}班 (${currentShift})` : selectedDate > todayStr ? `🔮 未來 ${selectedShiftTime}班 (${currentShift})` : `📜 歷史 ${selectedShiftTime}班 (${currentShift})`}</span>
                 </span>
 
                 {userRole === 'admin' && selectedDate !== todayStr && (
@@ -2073,6 +2176,43 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
+          {/* Unsaved Changes Prompt Guard */}
+          {unsavedPrompt.open && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-amber-500/50 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+                <div className="flex items-center space-x-2 text-amber-400">
+                  <span className="text-xl">⚠️</span>
+                  <h3 className="text-base font-bold text-slate-100">
+                    尚有未儲存的看板變更！
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  您在 <strong className="text-amber-300">[{selectedDate} {selectedShiftTime}班]</strong> 進行了人員排班或機況變更，但尚未儲存。切換或離開前是否要先進行儲存？
+                </p>
+                <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2 border-t border-slate-800">
+                  <button
+                    onClick={handlePromptCancel}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3.5 py-2 rounded text-xs border border-slate-700"
+                  >
+                    取消 (留在當前頁面)
+                  </button>
+                  <button
+                    onClick={handlePromptDiscardAndProceed}
+                    className="bg-rose-900/80 hover:bg-rose-800 text-rose-200 px-3.5 py-2 rounded text-xs font-medium border border-rose-700"
+                  >
+                    不儲存直接離開
+                  </button>
+                  <button
+                    onClick={handlePromptSaveAndProceed}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded text-xs font-bold shadow transition flex items-center justify-center gap-1"
+                  >
+                    💾 儲存並繼續
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Quick Assign Personnel Modal */}
           {assignModal.open && (
             <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2120,7 +2260,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 activeTabPool === "duty" ? "bg-purple-600 text-white font-bold" : "bg-slate-800 text-slate-400"
                               }`}
                             >
-                              {categorizedPersonnel.dutySquad}當班
+                              {currentShift}當班
                             </button>
                             <button
                               onClick={() => setActiveTabPool("support")}
@@ -2128,7 +2268,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 activeTabPool === "support" ? "bg-blue-600 text-white font-bold" : "bg-slate-800 text-slate-400"
                               }`}
                             >
-                              {categorizedPersonnel.supportSquad}支援
+                              {supportShift}支援
                             </button>
                           </div>
 
@@ -2386,7 +2526,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                               ].map(({ shift, title, color, pool }) => (
                                 <div key={shift}>
                                   <div className={`text-[10px] font-bold mb-1 border-b border-slate-800 pb-0.5 ${color}`}>
-                                    {title} ({shift === categorizedPersonnel.dutySquad ? '⭐ 當班' : shift === categorizedPersonnel.supportSquad ? '🤝 支援' : '一般'})
+                                    {title} ({shift === currentShift ? '⭐ 當班' : shift === supportShift ? '🤝 支援' : '一般'})
                                   </div>
                                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-1">
                                     {pool.map(p => {
