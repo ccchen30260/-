@@ -391,10 +391,12 @@
 
       const currentScheduleKey = `${selectedDate}_${selectedShiftTime}`;
 
+      // 修正：檢視者 (viewer) 不需要跳出未儲存提示
       const isDirty = useMemo(() => {
+        if (userRole !== 'admin') return false;
         if (!savedSnapshot) return false;
         return JSON.stringify({ machines, attendanceMap }) !== savedSnapshot;
-      }, [machines, attendanceMap, savedSnapshot]);
+      }, [userRole, machines, attendanceMap, savedSnapshot]);
 
       const getPersonScheduledShift = (squad, personName) => {
         const [y, m, d] = selectedDate.split('-').map(Number);
@@ -527,24 +529,6 @@
       }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap, schedulesMap]);
 
       useEffect(() => {
-        if (!selectedDate) return;
-        const next = {};
-        
-        categorizedPersonnel.duty.forEach(item => {
-          const sVal = item.schedShift;
-          const isLeave = sVal && sVal !== '日' && sVal !== '夜';
-          next[item.name] = !isLeave;
-        });
-
-        categorizedPersonnel.support.forEach(item => {
-          const sVal = item.schedShift;
-          next[item.name] = (sVal === 'G');
-        });
-
-        setAttendanceMap(next);
-      }, [selectedDate, selectedShiftTime, scheduledShifts, categorizedPersonnel.dutySquad, categorizedPersonnel.supportSquad]);
-
-      useEffect(() => {
         if (!savedSnapshot) {
           setSavedSnapshot(JSON.stringify({ machines, attendanceMap }));
         }
@@ -552,14 +536,14 @@
 
       useEffect(() => {
         const handleBeforeUnload = (e) => {
-          if (isDirty) {
+          if (isDirty && userRole === 'admin') {
             e.preventDefault();
             e.returnValue = '';
           }
         };
         window.addEventListener('beforeunload', handleBeforeUnload);
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-      }, [isDirty]);
+      }, [isDirty, userRole]);
 
       useEffect(() => {
         if (!supabaseUrl || !supabaseKey || !window.supabase) {
@@ -588,6 +572,29 @@
           const client = window.supabase.createClient(supabaseUrl, supabaseKey);
           supabaseRef.current = client;
 
+          const applyRemoteState = (remote) => {
+            if (!remote) return;
+            if (remote.machineTypes) setMachineTypes(remote.machineTypes);
+            if (remote.skillGroups) setSkillGroups(remote.skillGroups);
+            if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
+            if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
+            if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
+
+            // 只在「未修改狀態」(isDirty === false) 時更新畫面視圖，避免背景輪詢蓋跳當前查看的日期
+            if (!isDirty && remote.schedulesMap) {
+              const currentKey = `${selectedDate}_${selectedShiftTime}`;
+              const activeSchedule = remote.schedulesMap[currentKey] || remote.schedulesMap[selectedDate];
+              if (activeSchedule) {
+                if (activeSchedule.machines) setMachines(activeSchedule.machines);
+                if (activeSchedule.attendanceMap) setAttendanceMap(activeSchedule.attendanceMap);
+                setSavedSnapshot(JSON.stringify({
+                  machines: activeSchedule.machines || DEFAULT_MACHINES,
+                  attendanceMap: activeSchedule.attendanceMap || {}
+                }));
+              }
+            }
+          };
+
           const fetchInitial = async () => {
             try {
               const { data: settingsData } = await client.from('settings').select('key, value');
@@ -612,14 +619,7 @@
               const { data, error } = await client.from('mfg_board').select('*').eq('id', 'global_state').single();
               if (error) throw error;
               if (data && data.data) {
-                const cloudState = data.data;
-                if (cloudState.machines) setMachines(cloudState.machines);
-                if (cloudState.attendanceMap) setAttendanceMap(cloudState.attendanceMap);
-                if (cloudState.machineTypes) setMachineTypes(cloudState.machineTypes);
-                if (cloudState.skillGroups) setSkillGroups(cloudState.skillGroups);
-                if (cloudState.mStatusOptions) setMStatusOptions(cloudState.mStatusOptions);
-                if (cloudState.matStatusOptions) setMatStatusOptions(cloudState.matStatusOptions);
-                if (cloudState.schedulesMap) setSchedulesMap(cloudState.schedulesMap);
+                applyRemoteState(data.data);
               }
               setSupabaseConnected(true);
               setSupabaseErrorMsg("");
@@ -642,14 +642,7 @@
               channel = client.channel('mfg_board_changes')
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'mfg_board', filter: 'id=eq.global_state' }, payload => {
                   if (payload.new && payload.new.data) {
-                    const remote = payload.new.data;
-                    if (remote.machines) setMachines(remote.machines);
-                    if (remote.attendanceMap) setAttendanceMap(remote.attendanceMap);
-                    if (remote.machineTypes) setMachineTypes(remote.machineTypes);
-                    if (remote.skillGroups) setSkillGroups(remote.skillGroups);
-                    if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
-                    if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
-                    if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
+                    applyRemoteState(payload.new.data);
                   }
                 });
 
@@ -669,14 +662,7 @@
               const { data, error } = await client.from('mfg_board').select('data').eq('id', 'global_state').single();
               if (error) throw error;
               if (data && data.data) {
-                const remote = data.data;
-                if (remote.machines) setMachines(remote.machines);
-                if (remote.attendanceMap) setAttendanceMap(remote.attendanceMap);
-                if (remote.machineTypes) setMachineTypes(remote.machineTypes);
-                if (remote.skillGroups) setSkillGroups(remote.skillGroups);
-                if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
-                if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
-                if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
+                applyRemoteState(data.data);
               }
               setSupabaseConnected(true);
             } catch(pollErr) {}
@@ -740,6 +726,31 @@
         }
       };
 
+      const calculateDefaultAttendance = (targetDate, targetShift) => {
+        const [y, m, d] = targetDate.split('-').map(Number);
+        const squads = ['S1', 'S2', 'S3', 'S4'];
+        const dutySquad = squads.find(sq => getDefaultShift(sq, y, m, d) === targetShift) || "S4";
+        const targetSupportSquad = SHIFT_PAIR_MAP[dutySquad] || "S2";
+
+        const nextAttendance = {};
+        const dutyMembers = squadRosters[dutySquad] || [];
+        dutyMembers.forEach(person => {
+          const key = `${dutySquad}_shift_${y}_${m}_${person}_${d}`;
+          const sVal = scheduledShifts[key] !== undefined ? scheduledShifts[key] : getDefaultShift(dutySquad, y, m, d);
+          const isLeave = sVal && sVal !== '日' && sVal !== '夜';
+          nextAttendance[person] = !isLeave;
+        });
+
+        const supportMembers = squadRosters[targetSupportSquad] || [];
+        supportMembers.forEach(person => {
+          const key = `${targetSupportSquad}_shift_${y}_${m}_${person}_${d}`;
+          const sVal = scheduledShifts[key] !== undefined ? scheduledShifts[key] : getDefaultShift(targetSupportSquad, y, m, d);
+          nextAttendance[person] = (sVal === 'G');
+        });
+
+        return nextAttendance;
+      };
+
       const handleSaveBoard = () => {
         const currentSnap = { machines, attendanceMap };
         const updatedMap = { ...schedulesMap, [currentScheduleKey]: currentSnap };
@@ -762,15 +773,15 @@
         const targetKey = `${targetDate}_${selectedShiftTime}`;
         const targetData = schedulesMap[targetKey] || schedulesMap[targetDate];
         
-        let newMachines = machines;
-        let newAttendance = attendanceMap;
+        let newMachines;
+        let newAttendance;
 
         if (targetData) {
           newMachines = targetData.machines || DEFAULT_MACHINES;
-          newAttendance = targetData.attendanceMap || {};
+          newAttendance = targetData.attendanceMap || calculateDefaultAttendance(targetDate, selectedShiftTime);
         } else {
           newMachines = DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" }));
-          newAttendance = {};
+          newAttendance = calculateDefaultAttendance(targetDate, selectedShiftTime);
         }
 
         setMachines(newMachines);
@@ -795,15 +806,15 @@
         const targetKey = `${selectedDate}_${targetShift}`;
         const targetData = schedulesMap[targetKey];
 
-        let newMachines = machines;
-        let newAttendance = attendanceMap;
+        let newMachines;
+        let newAttendance;
 
         if (targetData) {
           newMachines = targetData.machines || DEFAULT_MACHINES;
-          newAttendance = targetData.attendanceMap || {};
+          newAttendance = targetData.attendanceMap || calculateDefaultAttendance(selectedDate, targetShift);
         } else {
-          newMachines = machines;
-          newAttendance = attendanceMap;
+          newMachines = DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" }));
+          newAttendance = calculateDefaultAttendance(selectedDate, targetShift);
         }
 
         setMachines(newMachines);
@@ -859,22 +870,9 @@
       };
 
       const handleLoadScheduleAttendance = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          categorizedPersonnel.duty.forEach(item => {
-            const sVal = item.schedShift;
-            const isLeave = sVal && sVal !== '日' && sVal !== '夜';
-            next[item.name] = !isLeave;
-          });
-
-          categorizedPersonnel.support.forEach(item => {
-            const sVal = item.schedShift;
-            next[item.name] = (sVal === 'G');
-          });
-
-          pushToSupabase({ attendanceMap: next });
-          return next;
-        });
+        const next = calculateDefaultAttendance(selectedDate, selectedShiftTime);
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next });
         showNotice(`已成功根據 [${selectedDate} ${selectedShiftTime}班] 排班表更新當班與 G 加班支援出勤狀態！`, "success");
       };
 
@@ -893,7 +891,7 @@
         setSchedulesMap(prev => {
           const updated = {
             ...prev,
-            [selectedDate]: { machines: copiedMachines, attendanceMap: copiedAttendance }
+            [currentScheduleKey]: { machines: copiedMachines, attendanceMap: copiedAttendance }
           };
           pushToSupabase({
             schedulesMap: updated,
@@ -903,7 +901,7 @@
           return updated;
         });
 
-        showNotice(`已將今日 (${todayStr}) 排班完整複製至 [${selectedDate}]！`, "success");
+        showNotice(`已將今日 (${todayStr}) 排班完整複製至 [${selectedDate} ${selectedShiftTime}班]！`, "success");
       };
 
       const showNotice = (text, type = "info") => {
@@ -1776,7 +1774,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       const schedShift = item.schedShift;
                       const isOT = (schedShift === 'G');
                       const isLeave = schedShift && schedShift !== '日' && schedShift !== '夜' && !isOT;
-                      const isChecked = attendanceMap[name] !== undefined ? attendanceMap[name] : isOT;
+                      const isChecked = attendanceMap[name] !== undefined ? attendanceMap[name] : false;
                       return (
                         <label
                           key={name}
@@ -2187,7 +2185,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   </h3>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  您在 <strong className="text-amber-300">[{selectedDate} {selectedShiftTime}班]</strong> 進行了人員排班或機況變更，但尚未儲存。切換或離開前是否要先進行儲存？
+                  您在 <strong className="text-amber-300">[{selectedDate} ${selectedShiftTime}班]</strong> 進行了人員排班或機況變更，但尚未儲存。切換或離開前是否要先進行儲存？
                 </p>
                 <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2 border-t border-slate-800">
                   <button
