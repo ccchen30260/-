@@ -1030,9 +1030,11 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const dutyActualCount = dutyCheckedCount;
         const overtimeCount = supportCheckedCount;
         const actualCount = dutyCheckedCount + supportCheckedCount;
-        const running = machines.filter(m => m.mStatus === "正常運轉" && m.type !== "").length;
-        const down = machines.filter(m => m.mStatus === "設備異常" && m.type !== "").length;
-        const maint = machines.filter(m => m.mStatus === "停機保養" && m.type !== "").length;
+        // 將 type 不為空或是「折彎機」的項目皆列入機台統計
+        const isCountedMachine = m => m.type !== "" || m.name === "折彎機";
+        const running = machines.filter(m => m.mStatus === "正常運轉" && isCountedMachine(m)).length;
+        const down = machines.filter(m => m.mStatus === "設備異常" && isCountedMachine(m)).length;
+        const maint = machines.filter(m => m.mStatus === "停機保養" && isCountedMachine(m)).length;
         return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint };
       }, [categorizedPersonnel.duty, dutyCheckedCount, supportCheckedCount, machines]);
 
