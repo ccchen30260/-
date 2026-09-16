@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>製造管理看板 - GitHub & Supabase 雲端版</title>
+  <title>製造管理看板</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -86,12 +86,6 @@
       <svg className="w-3.5 h-3.5 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
         <circle cx="12" cy="7" r="4"></circle>
-      </svg>
-    );
-
-    const IconCloud = () => (
-      <svg className="w-4 h-4 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
       </svg>
     );
 
@@ -268,19 +262,6 @@
       { id: "m-30", type: "覆捲機", name: "RW19", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" }
     ];
 
-    const SQL_SETUP_SCRIPT = `-- 請在 Supabase 儀表板 SQL Editor 執行以下 SQL 語法：
-CREATE TABLE IF NOT EXISTS public.mfg_board (
-  id TEXT PRIMARY KEY,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 開啟 Row Level Security (RLS) 並允許公開讀寫
-ALTER TABLE public.mfg_board ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Public Full Access" ON public.mfg_board;
-CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH CHECK (true);
-`;
-
     const getTodayStr = () => {
       const d = new Date();
       const year = d.getFullYear();
@@ -302,7 +283,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const todayStr = useMemo(() => getTodayStr(), []);
       const [selectedDate, setSelectedDate] = useState(todayStr);
 
-      // 新增班次選擇：日班 (日) 或 夜班 (夜)，預設依目前時間自動判定
       const [selectedShiftTime, setSelectedShiftTime] = useState(() => {
         const hour = new Date().getHours();
         return (hour >= 8 && hour < 20) ? "日" : "夜";
@@ -319,7 +299,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [supabaseConnected, setSupabaseConnected] = useState(false);
       const [supabaseErrorMsg, setSupabaseErrorMsg] = useState("");
       const [realtimeMode, setRealtimeMode] = useState("HTTP 輪詢模式");
-      const [showSupabaseModal, setShowSupabaseModal] = useState(false);
       const supabaseRef = useRef(null);
 
       // App Core States
@@ -332,7 +311,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         return localStorage.getItem("mfg_board_current_shift_v3") || "S4";
       });
 
-      // 依據「日期 + 日/夜班」自動判定對應的當班班別 (S1~S4)
       useEffect(() => {
         if (!selectedDate) return;
         const [y, m, d] = selectedDate.split('-').map(Number);
@@ -383,11 +361,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const duty = [];
         const support = [];
 
-        // 依據日期與日/夜班，精確找出當班的 1 個班別 (Duty Squad)
         const squads = ['S1', 'S2', 'S3', 'S4'];
         const dutySquad = squads.find(sq => getDefaultShift(sq, y, m, d) === selectedShiftTime) || currentShift;
-
-        // 依據當班班別，精確對應 1 個加班支援班別 (S1<->S3, S2<->S4)
         const targetSupportSquad = SHIFT_PAIR_MAP[dutySquad] || "S2";
 
         const dutyMembers = squadRosters[dutySquad] || [];
@@ -461,10 +436,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [editingTypeValue, setEditingTypeValue] = useState("");
       const [newTypeName, setNewTypeName] = useState("");
 
-      // New machine form
       const [newMachine, setNewMachine] = useState({ type: "羅得B", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
-
-      // Time
       const [currentTime, setCurrentTime] = useState(new Date().toLocaleString('zh-TW', { hour12: false }));
 
       useEffect(() => {
@@ -484,7 +456,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
       }, [machines, machineTypes, currentShift, mStatusOptions, matStatusOptions, skillGroups, attendanceMap]);
 
-      // 排班日期快照 (schedulesMap) 也要保存到本機，避免尚未連上雲端前遺失資料
       useEffect(() => {
         localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
       }, [schedulesMap]);
@@ -498,7 +469,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         let channel = null;
         let pollingInterval = null;
 
-        // 檢查當前執行環境 (如 Canvas 沙盒) 是否允許使用 WebSocket
         const checkWebSocketSupport = () => {
           if (typeof WebSocket === 'undefined') return false;
           try {
@@ -556,19 +526,14 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
               setSupabaseConnected(true);
               setSupabaseErrorMsg("");
             } catch(e) {
-              // 修正：之前無論成功或失敗都會被標記為「已連線」，導致使用者誤以為
-              // 資料已同步到雲端，但實際上可能是資料表不存在或 RLS 權限設定錯誤。
-              // 常見情況：查無 global_state 那一筆資料 (PGRST116)，這種情況視為
-              // 「連線成功但雲端尚無資料」，其餘錯誤才視為真正連線失敗。
               const code = e && e.code;
               if (code === 'PGRST116') {
-                // 資料表存在，只是還沒有 global_state 這筆資料 —— 視為連線成功
                 setSupabaseConnected(true);
                 setSupabaseErrorMsg("");
               } else {
-                console.error("Supabase 資料讀取失敗，請確認資料表已建立且 RLS 權限允許存取：", e);
+                console.error("Supabase 資料讀取失敗：", e);
                 setSupabaseConnected(false);
-                setSupabaseErrorMsg((e && (e.message || e.hint || e.details)) || "無法連線至 Supabase，請確認網址、金鑰與資料表設定");
+                setSupabaseErrorMsg((e && (e.message || e.hint || e.details)) || "無法連線至 Supabase");
               }
             }
           };
@@ -638,7 +603,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         } catch(err) {
           console.error("Failed to initialize Supabase:", err);
           setSupabaseConnected(false);
-          setSupabaseErrorMsg((err && err.message) || "初始化 Supabase 用戶端失敗");
+          setSupabaseErrorMsg((err && err.message) || "初始化 Supabase 失敗");
         }
       }, [supabaseUrl, supabaseKey]);
 
@@ -667,8 +632,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         } catch(err) {
           console.error("Failed to push state to Supabase:", err);
           setSupabaseConnected(false);
-          setSupabaseErrorMsg((err && (err.message || err.hint || err.details)) || "寫入 Supabase 失敗，資料僅保留在本機");
-          showNotice("⚠️ 雲端同步失敗，此變更僅儲存在本機，請檢查 Supabase 連線設定", "error");
+          setSupabaseErrorMsg((err && (err.message || err.hint || err.details)) || "寫入 Supabase 失敗");
+          showNotice("⚠️ 雲端同步失敗，此變更僅儲存在本機", "error");
         }
       };
 
@@ -696,7 +661,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const handleLoadScheduleAttendance = () => {
         setAttendanceMap(prev => {
           const next = { ...prev };
-          
           categorizedPersonnel.duty.forEach(item => {
             const sVal = item.schedShift;
             const isLeave = sVal && sVal !== '日' && sVal !== '夜';
@@ -714,12 +678,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           pushToSupabase({ attendanceMap: next });
           return next;
         });
-        showNotice(`已成功根據 [${selectedDate} ${selectedShiftTime}班] 排班表更新當班與 G 加班支援出勤狀態！`, "success");
+        showNotice(`已成功根據 [${selectedDate} ${selectedShiftTime}班] 排班表更新出勤狀態！`, "success");
       };
 
-      // 修正：換日期時，把「切換前那一天」的完整看板快照存進 schedulesMap，
-      // 並且立即把更新後的 schedulesMap 推送到 Supabase，這樣其他裝置
-      // 切換到相同日期時，才能抓到最新版本，而不是各自裝置本機的舊快照。
       const handleDateChange = (targetDate) => {
         if (targetDate === selectedDate) return;
 
@@ -738,9 +699,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         }
 
         setSchedulesMap(updatedMap);
-        // 注意：pushToSupabase 內部會用「呼叫當下」的 state closure 組成 payload，
-        // 這裡明確帶入 schedulesMap 與（切換前一天的）machines/attendanceMap，
-        // 確保切換前那天的資料確實被寫入雲端，而不是遺留在單一裝置的本機端。
         pushToSupabase({
           schedulesMap: updatedMap,
           machines: currentSnap.machines,
@@ -786,14 +744,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const showNotice = (text, type = "info") => {
         setNoticeMessage({ text, type });
         setTimeout(() => setNoticeMessage(null), 3000);
-      };
-
-      const handleSaveSupabaseCredentials = (e) => {
-        e.preventDefault();
-        localStorage.setItem("mfg_supabase_url", supabaseUrl.trim());
-        localStorage.setItem("mfg_supabase_key", supabaseKey.trim());
-        setShowSupabaseModal(false);
-        showNotice("已儲存 Supabase 連線設定！系統將自動連接...", "success");
       };
 
       const handleShiftChange = (newShift) => {
@@ -1089,7 +1039,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const dutyActualCount = dutyCheckedCount;
         const overtimeCount = supportCheckedCount;
         const actualCount = dutyCheckedCount + supportCheckedCount;
-        // 將 type 不為空或是「折彎機」的項目皆列入機台統計
         const isCountedMachine = m => m.type !== "" || m.name === "折彎機";
         const running = machines.filter(m => m.mStatus === "正常運轉" && isCountedMachine(m)).length;
         const down = machines.filter(m => m.mStatus === "設備異常" && isCountedMachine(m)).length;
@@ -1320,100 +1269,12 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
               
               <div className="text-center space-y-2">
-                <div className="w-16 h-16 rounded-2xl bg-blue-600 mx-auto flex items-center justify-center text-3xl shadow-lg shadow-blue-500/30">
-                  🏭
-                </div>
                 <h1 className="text-2xl font-black text-slate-100 tracking-wider">
                   製造管理看板
                 </h1>
                 <p className="text-xs text-slate-400">
-                  GitHub & Supabase 雲端實時同步系統
+                  實時現場排班與機況管理系統
                 </p>
-                {!supabaseConnected && supabaseErrorMsg && (
-                  <p className="text-[11px] text-amber-400 bg-amber-950/60 border border-amber-800 rounded px-2 py-1 mt-1">
-                    ⚠️ 雲端尚未連線：{supabaseErrorMsg}
-                  </p>
-                )}
-              </div>
-
-              {/* Date & Shift Time Selector Bar */}
-              <div className="bg-slate-950 border border-slate-800 p-3 rounded-lg flex flex-col items-center justify-between gap-2 shadow">
-                <div className="flex items-center space-x-2 w-full justify-between overflow-x-auto">
-                  <span className="text-xs font-bold text-slate-300 whitespace-nowrap flex items-center gap-1">
-                    📅 排班日期:
-                  </span>
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={e => handleDateChange(e.target.value)}
-                    className="bg-slate-900 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded-md focus:outline-none focus:border-blue-500 font-mono"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between w-full pt-1 border-t border-slate-800/80">
-                  <div className="flex items-center space-x-1">
-                    <span className="text-xs font-bold text-slate-300 whitespace-nowrap">班別:</span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedShiftTime("日")}
-                      className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1 ${
-                        selectedShiftTime === "日"
-                          ? "bg-amber-500 text-slate-950 shadow-md scale-105"
-                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-                      }`}
-                    >
-                      ☀️ 日班
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedShiftTime("夜")}
-                      className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1 ${
-                        selectedShiftTime === "夜"
-                          ? "bg-indigo-600 text-white shadow-md scale-105"
-                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-                      }`}
-                    >
-                      🌙 夜班
-                    </button>
-                  </div>
-
-                  <div className="flex items-center space-x-1">
-                    <button
-                      type="button"
-                      onClick={() => handleDateChange(todayStr)}
-                      className={`px-2 py-1 rounded text-[11px] font-bold transition whitespace-nowrap ${
-                        selectedDate === todayStr
-                          ? "bg-blue-600 text-white shadow-md"
-                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-                      }`}
-                    >
-                      今天
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDateChange(getOffsetDateStr(todayStr, 1))}
-                      className={`px-2 py-1 rounded text-[11px] font-bold transition whitespace-nowrap ${
-                        selectedDate === getOffsetDateStr(todayStr, 1)
-                          ? "bg-blue-600 text-white shadow-md"
-                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-                      }`}
-                    >
-                      明天
-                    </button>
-                  </div>
-                </div>
-
-                <div className="w-full text-center pt-1 border-t border-slate-800/80">
-                  <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold border inline-block ${
-                    selectedDate === todayStr
-                      ? "bg-emerald-950 text-emerald-300 border-emerald-700"
-                      : selectedDate > todayStr
-                        ? "bg-purple-950 text-purple-300 border-purple-700"
-                        : "bg-slate-800 text-slate-400 border-slate-700"
-                  }`}>
-                    {selectedDate === todayStr ? `🟢 今日 ${selectedShiftTime}班 (${currentShift})` : selectedDate > todayStr ? `🔮 未來 ${selectedShiftTime}班 (${currentShift})` : `📜 歷史 ${selectedShiftTime}班 (${currentShift})`}
-                  </span>
-                </div>
               </div>
 
               <div className="space-y-4 pt-2">
@@ -1477,15 +1338,8 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 </form>
               </div>
 
-              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800">
+              <div className="text-center text-[11px] text-slate-500 pt-2 border-t border-slate-800">
                 <span>預設管理員密碼：<code className="text-blue-400 font-mono">0000</code></span>
-                <button
-                  type="button"
-                  onClick={() => setShowSupabaseModal(true)}
-                  className="text-blue-400 hover:underline flex items-center"
-                >
-                  <IconCloud /> 設定 Supabase 雲端
-                </button>
               </div>
 
             </div>
@@ -1501,33 +1355,17 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
               
               <div className="flex items-center space-x-3 w-full md:w-auto justify-between md:justify-start">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-blue-500/30">
-                    🏭
-                  </div>
-                  <div>
-                    <h1 className="text-xl font-black tracking-wider text-slate-100 flex items-center gap-2">
-                      製造管理看板
-                      <span className={`text-xs border px-2 py-0.5 rounded-full font-normal ${
-                        userRole === 'admin' 
-                          ? 'bg-purple-900/60 text-purple-300 border-purple-500/30' 
-                          : 'bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
-                      }`}>
-                        {userRole === 'admin' ? '🔑 管理員權限' : '👁️ 檢視者模式'}
-                      </span>
-                      <button
-                        onClick={() => setShowSupabaseModal(true)}
-                        className={`text-[10px] border px-2 py-0.5 rounded-full font-normal transition flex items-center ${
-                          supabaseConnected 
-                            ? 'bg-emerald-950 text-emerald-300 border-emerald-700 hover:bg-emerald-900' 
-                            : 'bg-amber-950 text-amber-300 border-amber-700 hover:bg-amber-900'
-                        }`}
-                        title={supabaseConnected ? "點擊設定 Supabase 雲端資料庫" : (supabaseErrorMsg || "點擊設定 Supabase 雲端資料庫")}
-                      >
-                        <IconCloud /> {supabaseConnected ? `雲端連線 (${realtimeMode})` : "單機模式 (未連線)"}
-                      </button>
-                    </h1>
-                  </div>
+                <div>
+                  <h1 className="text-xl font-black tracking-wider text-slate-100 flex items-center gap-2">
+                    製造管理看板
+                    <span className={`text-xs border px-2 py-0.5 rounded-full font-normal ${
+                      userRole === 'admin' 
+                        ? 'bg-purple-900/60 text-purple-300 border-purple-500/30' 
+                        : 'bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
+                    }`}>
+                      {userRole === 'admin' ? '🔑 管理員權限' : '👁️ 檢視者模式'}
+                    </span>
+                  </h1>
                 </div>
 
                 <div className="text-right md:hidden font-mono text-xs text-blue-400 bg-slate-800/80 px-2.5 py-1 rounded border border-slate-700">
@@ -1629,7 +1467,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {/* Main Dashboard Layout */}
           <main className="max-w-7xl mx-auto w-full p-4 flex-1 flex flex-col gap-4">
             
             {/* Date Selector & Pre-scheduling Bar */}
@@ -1645,7 +1482,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   className="bg-slate-950 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded-md focus:outline-none focus:border-blue-500 font-mono"
                 />
 
-                {/* 新增日班 / 夜班切換按鈕 */}
                 <div className="flex items-center space-x-1 border-l border-slate-800 pl-2 ml-1">
                   <span className="text-xs font-bold text-slate-300 whitespace-nowrap">班別:</span>
                   <button
@@ -1758,7 +1594,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {}
             {/* On-site Roll Call Table */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
@@ -1964,8 +1799,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {}
-            {/* Main Interactive Machine Grid */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                 <div className="flex items-center space-x-3 flex-wrap gap-y-1">
@@ -2235,7 +2068,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
-          {}
           {/* Confirmation Dialog */}
           {confirmDialog.open && (
             <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2261,89 +2093,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     className="bg-rose-600 hover:bg-rose-500 text-white px-3.5 py-1.5 rounded text-xs font-semibold shadow"
                   >
                     確定執行
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Supabase Configuration & Setup Modal */}
-          {showSupabaseModal && (
-            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
-                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-                    <IconCloud /> Supabase 雲端資料庫設定
-                  </h3>
-                  <button onClick={() => setShowSupabaseModal(false)} className="text-slate-400 hover:text-white font-bold">✕</button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
-                  <div className={`p-2.5 rounded-lg border text-[11px] leading-relaxed ${
-                    supabaseConnected
-                      ? "bg-emerald-950/60 border-emerald-800 text-emerald-300"
-                      : "bg-amber-950/60 border-amber-800 text-amber-300"
-                  }`}>
-                    {supabaseConnected
-                      ? `✅ 目前狀態：已成功連線至雲端資料庫 (${realtimeMode})`
-                      : `⚠️ 目前狀態：尚未連線${supabaseErrorMsg ? `　原因：${supabaseErrorMsg}` : ""}`}
-                  </div>
-
-                  <form onSubmit={handleSaveSupabaseCredentials} className="space-y-3">
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">1. Supabase Project URL</label>
-                      <input
-                        type="url"
-                        placeholder="https://xyzcompany.supabase.co"
-                        value={supabaseUrl}
-                        onChange={e => setSupabaseUrl(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none focus:border-blue-500 font-mono text-[11px]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-300 font-semibold mb-1">2. Supabase Anon API Key</label>
-                      <input
-                        type="password"
-                        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                        value={supabaseKey}
-                        onChange={e => setSupabaseKey(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 text-slate-200 p-2 rounded focus:outline-none focus:border-blue-500 font-mono text-[11px]"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-semibold shadow"
-                    >
-                      儲存設定並連結 Supabase
-                    </button>
-                  </form>
-
-                  <div className="border-t border-slate-800 pt-3 space-y-2">
-                    <div className="font-bold text-amber-400 flex items-center gap-1">
-                      ⚡ Supabase 快速資料庫建立腳本 (SQL Editor)
-                    </div>
-                    <p className="text-slate-400 leading-relaxed text-[11px]">
-                      複製下方 SQL 語法至 Supabase 儀表板中的 <strong>SQL Editor</strong> 執行，即可在 1 分鐘內建立跨裝置實時連線資料表：
-                    </p>
-                    <textarea
-                      readOnly
-                      value={SQL_SETUP_SCRIPT}
-                      className="w-full h-32 bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-[10px] p-2.5 rounded focus:outline-none"
-                    />
-                    <p className="text-slate-500 text-[10px] leading-relaxed">
-                      💡 若「單機模式」的提示一直不消失，最常見原因是這段 SQL 還沒執行過，或是 RLS 政策未套用成功，請至 Supabase 後台 Table Editor 確認 mfg_board 資料表是否存在。
-                    </p>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-slate-800 flex justify-end shrink-0">
-                  <button
-                    onClick={() => setShowSupabaseModal(false)}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-1.5 rounded text-xs border border-slate-700"
-                  >
-                    關閉視窗
                   </button>
                 </div>
               </div>
@@ -3189,7 +2938,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
           )}
 
           <footer className="bg-slate-950 border-t border-slate-900 py-3 text-center text-xs text-slate-500">
-            製造管理看板 © 2026 - Supabase Connected ({realtimeMode})
+            製造管理看板 © 2026
           </footer>
 
         </div>
