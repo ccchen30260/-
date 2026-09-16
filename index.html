@@ -479,6 +479,24 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           return;
         }
 
+        let channel = null;
+        let pollingInterval = null;
+
+        // 檢查當前執行環境 (如 Canvas 沙盒) 是否允許使用 WebSocket
+        const checkWebSocketSupport = () => {
+          if (typeof WebSocket === 'undefined') return false;
+          try {
+            const host = supabaseUrl.replace(/^https?:\/\//, '');
+            const testWs = new WebSocket(`wss://${host}/realtime/v1/websocket?apikey=${supabaseKey}&vsn=2.0.0`);
+            testWs.close();
+            return true;
+          } catch (e) {
+            return false;
+          }
+        };
+
+        const wsSupported = checkWebSocketSupport();
+
         try {
           const client = window.supabase.createClient(supabaseUrl, supabaseKey);
           supabaseRef.current = client;
@@ -526,33 +544,34 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
           fetchInitial();
 
-          let channel = null;
-          let pollingInterval = null;
+          if (wsSupported) {
+            try {
+              channel = client.channel('mfg_board_changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'mfg_board', filter: 'id=eq.global_state' }, payload => {
+                  if (payload.new && payload.new.data) {
+                    const remote = payload.new.data;
+                    if (remote.machines) setMachines(remote.machines);
+                    if (remote.currentShift) setCurrentShift(remote.currentShift);
+                    if (remote.attendanceMap) setAttendanceMap(remote.attendanceMap);
+                    if (remote.machineTypes) setMachineTypes(remote.machineTypes);
+                    if (remote.skillGroups) setSkillGroups(remote.skillGroups);
+                    if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
+                    if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
+                    if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
+                  }
+                });
 
-          try {
-            channel = client.channel('mfg_board_changes')
-              .on('postgres_changes', { event: '*', schema: 'public', table: 'mfg_board', filter: 'id=eq.global_state' }, payload => {
-                if (payload.new && payload.new.data) {
-                  const remote = payload.new.data;
-                  if (remote.machines) setMachines(remote.machines);
-                  if (remote.currentShift) setCurrentShift(remote.currentShift);
-                  if (remote.attendanceMap) setAttendanceMap(remote.attendanceMap);
-                  if (remote.machineTypes) setMachineTypes(remote.machineTypes);
-                  if (remote.skillGroups) setSkillGroups(remote.skillGroups);
-                  if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
-                  if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
-                  if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
+              channel.subscribe((status, err) => {
+                if (status === 'SUBSCRIBED') {
+                  setRealtimeMode("WebSocket 實時");
+                } else {
+                  setRealtimeMode("HTTP 輪詢");
                 }
               });
-
-            channel.subscribe((status, err) => {
-              if (status === 'SUBSCRIBED') {
-                setRealtimeMode("WebSocket 實時");
-              } else if (err || status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                setRealtimeMode("HTTP 輪詢");
-              }
-            });
-          } catch(wsErr) {
+            } catch(wsErr) {
+              setRealtimeMode("HTTP 輪詢");
+            }
+          } else {
             setRealtimeMode("HTTP 輪詢");
           }
 
@@ -571,7 +590,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
               }
             } catch(pollErr) {}
-          }, 8000);
+          }, 5000);
 
           return () => {
             if (channel) {
@@ -645,12 +664,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           });
 
           categorizedPersonnel.support.forEach(item => {
-            const sVal = item.schedShift;
-            if (sVal === 'G') {
-              next[item.name] = true;
-            } else {
-              next[item.name] = false;
-            }
+            next[item.name] = false;
           });
 
           pushToSupabase({ attendanceMap: next });
@@ -991,8 +1005,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const supportCheckedCount = useMemo(() => {
         return categorizedPersonnel.support.filter(item => {
           if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          const sVal = item.schedShift;
-          return sVal === 'G';
+          return false;
         }).length;
       }, [categorizedPersonnel.support, attendanceMap]);
 
@@ -1005,8 +1018,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
         const supportPresent = categorizedPersonnel.support.filter(item => {
           if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          const sVal = item.schedShift;
-          return sVal === 'G';
+          return false;
         }).map(i => i.name);
 
         const allPresent = [...dutyPresent, ...supportPresent];
@@ -1788,7 +1800,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       const schedShift = item.schedShift;
                       const isOT = (schedShift === 'G');
                       const isLeave = schedShift && schedShift !== '日' && schedShift !== '夜' && !isOT;
-                      const isChecked = attendanceMap[name] !== undefined ? attendanceMap[name] : isOT;
+                      const isChecked = attendanceMap[name] !== undefined ? attendanceMap[name] : false;
                       return (
                         <label
                           key={name}
