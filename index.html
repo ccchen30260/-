@@ -294,8 +294,8 @@
       });
 
       // Supabase State
-      const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("mfg_supabase_url") || DEFAULT_SUPABASE_URL || "");
-      const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem("mfg_supabase_key") || DEFAULT_SUPABASE_KEY || "");
+      const [supabaseUrl] = useState(() => localStorage.getItem("mfg_supabase_url") || DEFAULT_SUPABASE_URL || "");
+      const [supabaseKey] = useState(() => localStorage.getItem("mfg_supabase_key") || DEFAULT_SUPABASE_KEY || "");
       const [supabaseConnected, setSupabaseConnected] = useState(false);
       const [supabaseErrorMsg, setSupabaseErrorMsg] = useState("");
       const [realtimeMode, setRealtimeMode] = useState("HTTP 輪詢模式");
@@ -306,22 +306,6 @@
         const saved = localStorage.getItem("mfg_board_machines_v8");
         return saved ? JSON.parse(saved) : DEFAULT_MACHINES;
       });
-
-      const [currentShift, setCurrentShift] = useState(() => {
-        return localStorage.getItem("mfg_board_current_shift_v3") || "S4";
-      });
-
-      useEffect(() => {
-        if (!selectedDate) return;
-        const [y, m, d] = selectedDate.split('-').map(Number);
-        const squads = ['S1', 'S2', 'S3', 'S4'];
-        const matchedSquad = squads.find(sq => getDefaultShift(sq, y, m, d) === selectedShiftTime);
-        if (matchedSquad && matchedSquad !== currentShift) {
-          setCurrentShift(matchedSquad);
-        }
-      }, [selectedDate, selectedShiftTime]);
-
-      const supportShift = SHIFT_PAIR_MAP[currentShift] || "S2";
 
       const [machineTypes, setMachineTypes] = useState(() => {
         const saved = localStorage.getItem("mfg_board_machine_types_v3");
@@ -356,13 +340,14 @@
         return getDefaultShift(squad, y, m, d);
       };
 
+      // 計算動態依日期與日/夜班別產生的當班 Squad 與支援 Squad，保持全局嚴格同步
       const categorizedPersonnel = useMemo(() => {
         const [y, m, d] = selectedDate.split('-').map(Number);
         const duty = [];
         const support = [];
 
         const squads = ['S1', 'S2', 'S3', 'S4'];
-        const dutySquad = squads.find(sq => getDefaultShift(sq, y, m, d) === selectedShiftTime) || currentShift;
+        const dutySquad = squads.find(sq => getDefaultShift(sq, y, m, d) === selectedShiftTime) || "S4";
         const targetSupportSquad = SHIFT_PAIR_MAP[dutySquad] || "S2";
 
         const dutyMembers = squadRosters[dutySquad] || [];
@@ -378,7 +363,10 @@
         });
 
         return { duty, support, dutySquad, supportSquad: targetSupportSquad };
-      }, [selectedDate, selectedShiftTime, currentShift, squadRosters, scheduledShifts]);
+      }, [selectedDate, selectedShiftTime, squadRosters, scheduledShifts]);
+
+      const currentShift = categorizedPersonnel.dutySquad;
+      const supportShift = categorizedPersonnel.supportSquad;
 
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
@@ -401,12 +389,12 @@
         categorizedPersonnel.duty.forEach(item => {
           const sVal = item.schedShift;
           const isLeave = sVal && sVal !== '日' && sVal !== '夜';
-          next[item.name] = !isLeave; // 當班請假則不勾選，正常則勾選
+          next[item.name] = !isLeave;
         });
 
         categorizedPersonnel.support.forEach(item => {
           const sVal = item.schedShift;
-          next[item.name] = (sVal === 'G'); // 支援人員加班 (G) 則自動勾選，其餘不勾選
+          next[item.name] = (sVal === 'G');
         });
 
         setAttendanceMap(next);
@@ -455,7 +443,10 @@
       const [editingTypeValue, setEditingTypeValue] = useState("");
       const [newTypeName, setNewTypeName] = useState("");
 
+      // New machine form
       const [newMachine, setNewMachine] = useState({ type: "羅得B", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
+
+      // Time
       const [currentTime, setCurrentTime] = useState(new Date().toLocaleString('zh-TW', { hour12: false }));
 
       useEffect(() => {
@@ -468,12 +459,11 @@
       useEffect(() => {
         localStorage.setItem("mfg_board_machines_v8", JSON.stringify(machines));
         localStorage.setItem("mfg_board_machine_types_v3", JSON.stringify(machineTypes));
-        localStorage.setItem("mfg_board_current_shift_v3", currentShift);
         localStorage.setItem("mfg_board_mstatus_opt_v4", JSON.stringify(mStatusOptions));
         localStorage.setItem("mfg_board_matstatus_opt_v4", JSON.stringify(matStatusOptions));
         localStorage.setItem("mfg_board_skill_groups_v4", JSON.stringify(skillGroups));
         localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
-      }, [machines, machineTypes, currentShift, mStatusOptions, matStatusOptions, skillGroups, attendanceMap]);
+      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap]);
 
       useEffect(() => {
         localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
@@ -534,7 +524,6 @@
               if (data && data.data) {
                 const cloudState = data.data;
                 if (cloudState.machines) setMachines(cloudState.machines);
-                if (cloudState.currentShift) setCurrentShift(cloudState.currentShift);
                 if (cloudState.attendanceMap) setAttendanceMap(cloudState.attendanceMap);
                 if (cloudState.machineTypes) setMachineTypes(cloudState.machineTypes);
                 if (cloudState.skillGroups) setSkillGroups(cloudState.skillGroups);
@@ -566,7 +555,6 @@
                   if (payload.new && payload.new.data) {
                     const remote = payload.new.data;
                     if (remote.machines) setMachines(remote.machines);
-                    if (remote.currentShift) setCurrentShift(remote.currentShift);
                     if (remote.attendanceMap) setAttendanceMap(remote.attendanceMap);
                     if (remote.machineTypes) setMachineTypes(remote.machineTypes);
                     if (remote.skillGroups) setSkillGroups(remote.skillGroups);
@@ -597,7 +585,6 @@
               if (data && data.data) {
                 const remote = data.data;
                 if (remote.machines) setMachines(remote.machines);
-                if (remote.currentShift) setCurrentShift(remote.currentShift);
                 if (remote.attendanceMap) setAttendanceMap(remote.attendanceMap);
                 if (remote.machineTypes) setMachineTypes(remote.machineTypes);
                 if (remote.skillGroups) setSkillGroups(remote.skillGroups);
@@ -680,6 +667,7 @@
       const handleLoadScheduleAttendance = () => {
         setAttendanceMap(prev => {
           const next = { ...prev };
+          
           categorizedPersonnel.duty.forEach(item => {
             const sVal = item.schedShift;
             const isLeave = sVal && sVal !== '日' && sVal !== '夜';
@@ -694,7 +682,7 @@
           pushToSupabase({ attendanceMap: next });
           return next;
         });
-        showNotice(`已成功根據 [${selectedDate} ${selectedShiftTime}班] 排班表更新出勤狀態！`, "success");
+        showNotice(`已成功根據 [${selectedDate} ${selectedShiftTime}班] 排班表更新當班與 G 加班支援出勤狀態！`, "success");
       };
 
       const handleDateChange = (targetDate) => {
@@ -706,11 +694,9 @@
         const targetData = updatedMap[targetDate];
         if (targetData) {
           setMachines(targetData.machines || DEFAULT_MACHINES);
-          setCurrentShift(targetData.currentShift || "S4");
           setAttendanceMap(targetData.attendanceMap || {});
         } else {
           setMachines(DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" })));
-          setCurrentShift("S4");
           setAttendanceMap({});
         }
 
@@ -718,7 +704,6 @@
         pushToSupabase({
           schedulesMap: updatedMap,
           machines: currentSnap.machines,
-          currentShift: currentSnap.currentShift,
           attendanceMap: currentSnap.attendanceMap
         });
 
@@ -733,22 +718,19 @@
         }
         const todayData = schedulesMap[todayStr] || { machines, currentShift, attendanceMap };
         const copiedMachines = JSON.parse(JSON.stringify(todayData.machines || machines));
-        const copiedShift = todayData.currentShift || currentShift;
         const copiedAttendance = JSON.parse(JSON.stringify(todayData.attendanceMap || attendanceMap));
 
         setMachines(copiedMachines);
-        setCurrentShift(copiedShift);
         setAttendanceMap(copiedAttendance);
 
         setSchedulesMap(prev => {
           const updated = {
             ...prev,
-            [selectedDate]: { machines: copiedMachines, currentShift: copiedShift, attendanceMap: copiedAttendance }
+            [selectedDate]: { machines: copiedMachines, currentShift, attendanceMap: copiedAttendance }
           };
           pushToSupabase({
             schedulesMap: updated,
             machines: copiedMachines,
-            currentShift: copiedShift,
             attendanceMap: copiedAttendance
           });
           return updated;
@@ -760,14 +742,6 @@
       const showNotice = (text, type = "info") => {
         setNoticeMessage({ text, type });
         setTimeout(() => setNoticeMessage(null), 3000);
-      };
-
-      const handleShiftChange = (newShift) => {
-        if (newShift === currentShift) return;
-        setCurrentShift(newShift);
-        const newSupport = SHIFT_PAIR_MAP[newShift];
-        pushToSupabase({ currentShift: newShift });
-        showNotice(`已切換當班班別為 [${newShift}]（支援班別：${newSupport}）`, "info");
       };
 
       const handleAdminLogin = (e) => {
@@ -1466,7 +1440,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           <main className="max-w-7xl mx-auto w-full p-4 flex-1 flex flex-col gap-4">
             
             {/* Date Selector & Pre-scheduling Bar */}
@@ -1548,7 +1521,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       ? "bg-purple-950 text-purple-300 border-purple-700"
                       : "bg-slate-800 text-slate-400 border-slate-700"
                 }`}>
-                  <span>{selectedDate === todayStr ? `🟢 今日 ${selectedShiftTime}班實時排班` : selectedDate > todayStr ? `🔮 未來 ${selectedShiftTime}班預排` : `📜 歷史 ${selectedShiftTime}班紀錄`}</span>
+                  <span>{selectedDate === todayStr ? `🟢 今日 ${selectedShiftTime}班 (${currentShift})` : selectedDate > todayStr ? `🔮 未來 ${selectedShiftTime}班 (${currentShift})` : `📜 歷史 ${selectedShiftTime}班 (${currentShift})`}</span>
                 </span>
 
                 {userRole === 'admin' && selectedDate !== todayStr && (
@@ -1563,7 +1536,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {}
             {/* Metrics Counter Bar */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
@@ -1595,7 +1567,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {}
             {/* On-site Roll Call Table */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
@@ -1741,7 +1712,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {}
             {/* Filter & Search Toolbar */}
             <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-lg flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow">
               <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0">
@@ -1802,7 +1772,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {}
+            {/* Main Interactive Machine Grid */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                 <div className="flex items-center space-x-3 flex-wrap gap-y-1">
@@ -2072,7 +2042,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
-          {}
           {/* Confirmation Dialog */}
           {confirmDialog.open && (
             <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2151,7 +2120,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 activeTabPool === "duty" ? "bg-purple-600 text-white font-bold" : "bg-slate-800 text-slate-400"
                               }`}
                             >
-                              {currentShift}當班
+                              {categorizedPersonnel.dutySquad}當班
                             </button>
                             <button
                               onClick={() => setActiveTabPool("support")}
@@ -2159,7 +2128,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 activeTabPool === "support" ? "bg-blue-600 text-white font-bold" : "bg-slate-800 text-slate-400"
                               }`}
                             >
-                              {supportShift}支援
+                              {categorizedPersonnel.supportSquad}支援
                             </button>
                           </div>
 
@@ -2417,7 +2386,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                               ].map(({ shift, title, color, pool }) => (
                                 <div key={shift}>
                                   <div className={`text-[10px] font-bold mb-1 border-b border-slate-800 pb-0.5 ${color}`}>
-                                    {title} ({shift === currentShift ? '⭐ 當班' : shift === supportShift ? '🤝 支援' : '一般'})
+                                    {title} ({shift === categorizedPersonnel.dutySquad ? '⭐ 當班' : shift === categorizedPersonnel.supportSquad ? '🤝 支援' : '一般'})
                                   </div>
                                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-1">
                                     {pool.map(p => {
@@ -2942,9 +2911,8 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           <footer className="bg-slate-950 border-t border-slate-900 py-3 text-center text-xs text-slate-500">
-            製造管理看板 © 2026
+            製造管理看板 © 2026 - Supabase Connected ({realtimeMode})
           </footer>
 
         </div>
