@@ -371,7 +371,7 @@
         return saved ? JSON.parse(saved) : {};
       });
 
-      // Modal & Editing states
+      // Modals & Editing states
       const [assignModal, setAssignModal] = useState({ open: false, machineId: null, role: null });
       const [statusModal, setStatusModal] = useState({ open: false, machineId: null, type: null });
       const [isManagingStatuses, setIsManagingStatuses] = useState(false);
@@ -397,6 +397,37 @@
         if (!savedSnapshot) return false;
         return JSON.stringify({ machines, attendanceMap }) !== savedSnapshot;
       }, [userRole, machines, attendanceMap, savedSnapshot]);
+
+      // 【關鍵修正】建立此 Ref 避免背景輪詢（Polling/Realtime）的閉包陷阱覆蓋管理者正在指派的人員！
+      const isDirtyRef = useRef(isDirty);
+      useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
+
+      const selectedDateRef = useRef(selectedDate);
+      useEffect(() => { selectedDateRef.current = selectedDate; }, [selectedDate]);
+
+      const selectedShiftTimeRef = useRef(selectedShiftTime);
+      useEffect(() => { selectedShiftTimeRef.current = selectedShiftTime; }, [selectedShiftTime]);
+
+      const machinesRef = useRef(machines);
+      useEffect(() => { machinesRef.current = machines; }, [machines]);
+
+      const attendanceMapRef = useRef(attendanceMap);
+      useEffect(() => { attendanceMapRef.current = attendanceMap; }, [attendanceMap]);
+
+      const schedulesMapRef = useRef(schedulesMap);
+      useEffect(() => { schedulesMapRef.current = schedulesMap; }, [schedulesMap]);
+
+      const machineTypesRef = useRef(machineTypes);
+      useEffect(() => { machineTypesRef.current = machineTypes; }, [machineTypes]);
+
+      const skillGroupsRef = useRef(skillGroups);
+      useEffect(() => { skillGroupsRef.current = skillGroups; }, [skillGroups]);
+
+      const mStatusOptionsRef = useRef(mStatusOptions);
+      useEffect(() => { mStatusOptionsRef.current = mStatusOptions; }, [mStatusOptions]);
+
+      const matStatusOptionsRef = useRef(matStatusOptions);
+      useEffect(() => { matStatusOptionsRef.current = matStatusOptions; }, [matStatusOptions]);
 
       const getPersonScheduledShift = (squad, personName) => {
         const [y, m, d] = selectedDate.split('-').map(Number);
@@ -580,10 +611,15 @@
             if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
             if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
 
-            // 只在「未修改狀態」(isDirty === false) 時更新畫面視圖，避免背景輪詢蓋跳當前查看的日期
-            if (!isDirty && remote.schedulesMap) {
-              const currentKey = `${selectedDate}_${selectedShiftTime}`;
-              const activeSchedule = remote.schedulesMap[currentKey] || remote.schedulesMap[selectedDate];
+            // 【關鍵修正】：透過 ref 讀取即時的 isDirtyRef, selectedDateRef, selectedShiftTimeRef
+            // 避免背景輪詢（Polling/Realtime）的閉包舊值覆蓋現場主管正在指派編輯的人員與機況！
+            const currentIsDirty = isDirtyRef.current;
+            const curDate = selectedDateRef.current;
+            const curShift = selectedShiftTimeRef.current;
+
+            if (!currentIsDirty && remote.schedulesMap) {
+              const currentKey = `${curDate}_${curShift}`;
+              const activeSchedule = remote.schedulesMap[currentKey] || remote.schedulesMap[curDate];
               if (activeSchedule) {
                 if (activeSchedule.machines) setMachines(activeSchedule.machines);
                 if (activeSchedule.attendanceMap) setAttendanceMap(activeSchedule.attendanceMap);
@@ -703,13 +739,13 @@
         if (!supabaseRef.current) return;
         try {
           const payloadState = {
-            machines,
-            attendanceMap,
-            machineTypes,
-            skillGroups,
-            mStatusOptions,
-            matStatusOptions,
-            schedulesMap,
+            machines: machinesRef.current,
+            attendanceMap: attendanceMapRef.current,
+            machineTypes: machineTypesRef.current,
+            skillGroups: skillGroupsRef.current,
+            mStatusOptions: mStatusOptionsRef.current,
+            matStatusOptions: matStatusOptionsRef.current,
+            schedulesMap: schedulesMapRef.current,
             ...updatedFields
           };
           const { error } = await supabaseRef.current.from('mfg_board').upsert({
@@ -2143,6 +2179,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
+          {}
           {/* Confirmation Dialog */}
           {confirmDialog.open && (
             <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2185,7 +2222,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   </h3>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  您在 <strong className="text-amber-300">[{selectedDate} ${selectedShiftTime}班]</strong> 進行了人員排班或機況變更，但尚未儲存。切換或離開前是否要先進行儲存？
+                  您在 <strong className="text-amber-300">[{selectedDate} {selectedShiftTime}班]</strong> 進行了人員排班或機況變更，但尚未儲存。切換或離開前是否要先進行儲存？
                 </p>
                 <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2 border-t border-slate-800">
                   <button
