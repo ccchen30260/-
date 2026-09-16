@@ -292,6 +292,12 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const todayStr = useMemo(() => getTodayStr(), []);
       const [selectedDate, setSelectedDate] = useState(todayStr);
 
+      // 新增班次選擇：日班 (日) 或 夜班 (夜)，預設依目前時間自動判定
+      const [selectedShiftTime, setSelectedShiftTime] = useState(() => {
+        const hour = new Date().getHours();
+        return (hour >= 8 && hour < 20) ? "日" : "夜";
+      });
+
       const [schedulesMap, setSchedulesMap] = useState(() => {
         const saved = localStorage.getItem("mfg_board_schedules_map_v1");
         return saved ? JSON.parse(saved) : {};
@@ -314,6 +320,17 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [currentShift, setCurrentShift] = useState(() => {
         return localStorage.getItem("mfg_board_current_shift_v3") || "S4";
       });
+
+      // 依據「日期 + 日/夜班」自動判定對應的當班班別 (S1~S4)
+      useEffect(() => {
+        if (!selectedDate) return;
+        const [y, m, d] = selectedDate.split('-').map(Number);
+        const squads = ['S1', 'S2', 'S3', 'S4'];
+        const matchedSquad = squads.find(sq => getDefaultShift(sq, y, m, d) === selectedShiftTime);
+        if (matchedSquad && matchedSquad !== currentShift) {
+          setCurrentShift(matchedSquad);
+        }
+      }, [selectedDate, selectedShiftTime]);
 
       const supportShift = SHIFT_PAIR_MAP[currentShift] || "S2";
 
@@ -355,25 +372,27 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const duty = [];
         const support = [];
 
-        ['S1', 'S2', 'S3', 'S4'].forEach(sq => {
-          const sqDefault = getDefaultShift(sq, y, m, d);
+        // 依據日期與日/夜班，精確找出當班的 1 個班別 (Duty Squad)
+        const squads = ['S1', 'S2', 'S3', 'S4'];
+        const dutySquad = squads.find(sq => getDefaultShift(sq, y, m, d) === selectedShiftTime) || currentShift;
+
+        squads.forEach(sq => {
           const members = squadRosters[sq] || [];
+          const isOnDutySquad = (sq === dutySquad);
 
           members.forEach(person => {
             const sVal = getPersonScheduledShift(sq, person);
-            const isOnDutySquad = (sqDefault === '日' || sqDefault === '夜');
-            const isRegularShift = (sVal === '日' || sVal === '夜') || (isOnDutySquad && sVal !== 'G');
 
-            if (isRegularShift) {
-              duty.push({ name: person, squad: sq, schedShift: sVal || sqDefault });
+            if (isOnDutySquad) {
+              duty.push({ name: person, squad: sq, schedShift: sVal || selectedShiftTime });
             } else {
               support.push({ name: person, squad: sq, schedShift: sVal });
             }
           });
         });
 
-        return { duty, support };
-      }, [selectedDate, squadRosters, scheduledShifts]);
+        return { duty, support, dutySquad };
+      }, [selectedDate, selectedShiftTime, currentShift, squadRosters, scheduledShifts]);
 
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
@@ -637,7 +656,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           pushToSupabase({ attendanceMap: next });
           return next;
         });
-        showNotice(`已成功根據 [${selectedDate}] 排班表更新當班與 G 加班支援出勤狀態！`, "success");
+        showNotice(`已成功根據 [${selectedDate} ${selectedShiftTime}班] 排班表更新當班與 G 加班支援出勤狀態！`, "success");
       };
 
       const handleDateChange = (targetDate) => {
@@ -1140,66 +1159,182 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         });
       };
 
-      const handleCreateMachine = (e) => {
-        e.preventDefault();
-        if (!newMachine.name.trim()) return;
-        const id = "m-" + Date.now();
-        const updated = [...machines, { ...newMachine, id }];
-        setMachines(updated);
-        pushToSupabase({ machines: updated });
-        setShowAddModal(false);
-        setNewMachine({ type: machineTypes[0] || "", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
-        showNotice(`已建立新機台 [${newMachine.name}]`, "success");
-      };
-
       const generateReportText = () => {
-        let text = `【製造管理看板 - 現場排班與機況概況】\n`;
-        text += `排班日期：${selectedDate} (${selectedDate === todayStr ? '今日' : selectedDate > todayStr ? '未來預排' : '歷史紀錄'})\n`;
-        text += `產生時間：${currentTime}\n`;
-        text += `========================================\n`;
-        machines.forEach((m, idx) => {
-          text += `${idx + 1}. [${m.type || '通用'}] ${m.name} | 操作員: ${m.operator || '未指派'} | 預備員: ${m.backup || '無'} | 機況: ${m.mStatus} | 料況: ${m.matStatus || '未設定'}\n`;
-        });
-        text += `========================================\n`;
-        text += `統計：當班應到 ${stats.expectedCount} 人 | 當班實到 ${stats.dutyActualCount} 人 | 支援到工 ${stats.overtimeCount} 人 | 現場總實到 ${stats.actualCount} 人 | 正常運轉 ${stats.running} 台 (排除非設備) | 設備異常 ${stats.down} 台 | 停機保養 ${stats.maint} 台`;
-        return text;
+        const dutyPresentNames = categorizedPersonnel.duty
+          .filter(item => {
+            if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+            const sVal = item.schedShift;
+            return sVal && sVal !== '日' && sVal !== '夜' ? false : true;
+          })
+          .map(i => i.name);
+
+        const supportPresentNames = categorizedPersonnel.support
+          .filter(item => {
+            if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+            const sVal = item.schedShift;
+            return sVal === 'G';
+          })
+          .map(i => i.name);
+
+        const assignedList = machines
+          .filter(m => m.operator || m.backup)
+          .map(m => ` • ${m.name} [${m.type || '通用'}]: 操作員 ${m.operator || '無'} | 預備員 ${m.backup || '無'} | 機況: ${m.mStatus}${m.matStatus ? ` | 料況: ${m.matStatus}` : ''}`);
+
+        return `【製造現場排班概況與動態報告】
+📅 日期與班別: ${selectedDate} ${selectedShiftTime}班 (${currentShift}當班)
+----------------------------------------
+📊 出勤統計:
+ - 應到人數: ${stats.expectedCount} 人
+ - 當班實到: ${stats.dutyActualCount} 人 (${dutyPresentNames.join("、") || "無"})
+ - 加班支援: ${stats.overtimeCount} 人 (${supportPresentNames.join("、") || "無"})
+ - 現場總實到: ${stats.actualCount} 人
+ - 未指派工作: ${unassignedPeople.length} 人 (${unassignedPeople.join("、") || "全數安排"})
+
+🏭 機台運轉現況:
+ - 正常運轉: ${stats.running} 台 | 設備異常: ${stats.down} 台 | 停機保養: ${stats.maint} 台
+
+⚙️ 機台人員派工明細:
+${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
+`;
       };
 
       const handleCopyToClipboard = () => {
         const text = generateReportText();
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        try {
-          document.execCommand("copy");
-          showNotice("排班概況表已複製到剪貼簿！", "success");
-        } catch (err) {
-          showNotice("複製失敗，請手動選取文字複製", "error");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => {
+            showNotice("已複製會報文字至剪貼簿！", "success");
+          }).catch(() => {
+            copyFallback(text);
+          });
+        } else {
+          copyFallback(text);
         }
-        document.body.removeChild(textarea);
       };
 
-      if (userRole === null) {
+      const copyFallback = (text) => {
+        const el = document.createElement('textarea');
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+        showNotice("已複製會報文字至剪貼簿！", "success");
+      };
+
+      const handleCreateMachine = (e) => {
+        e.preventDefault();
+        if (!newMachine.name.trim()) return;
+        const newM = {
+          id: "m-" + Date.now(),
+          type: newMachine.type,
+          name: newMachine.name.trim(),
+          operator: "",
+          backup: "",
+          mStatus: newMachine.mStatus || "正常運轉",
+          matStatus: newMachine.matStatus || "",
+          note: ""
+        };
+        const updated = [...machines, newM];
+        setMachines(updated);
+        pushToSupabase({ machines: updated });
+        setNewMachine({ type: machineTypes[0] || "", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
+        setShowAddModal(false);
+        showNotice(`已成功新增機台 [${newM.name}]`, "success");
+      };
+
+      if (!userRole) {
         return (
           <div className="min-h-screen bg-industrial-950 flex items-center justify-center p-4">
-            <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 sm:p-8 space-y-6">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
               
               <div className="text-center space-y-2">
-                <div className="w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center text-3xl mx-auto shadow-lg shadow-blue-500/30">
+                <div className="w-16 h-16 rounded-2xl bg-blue-600 mx-auto flex items-center justify-center text-3xl shadow-lg shadow-blue-500/30">
                   🏭
                 </div>
-                <h1 className="text-2xl font-black tracking-wider text-slate-100">
+                <h1 className="text-2xl font-black text-slate-100 tracking-wider">
                   製造管理看板
                 </h1>
-                <p className="text-xs text-slate-400">Smart Shopfloor Control Board (Cloud Edition)</p>
-                <div className="pt-1">
-                  <span className={`text-[10px] px-2.5 py-1 rounded-full border ${
-                    supabaseConnected 
-                      ? "bg-emerald-950 text-emerald-300 border-emerald-700" 
-                      : "bg-amber-950 text-amber-300 border-amber-700"
+                <p className="text-xs text-slate-400">
+                  GitHub & Supabase 雲端實時同步系統
+                </p>
+              </div>
+
+              {/* Date & Shift Time Selector Bar */}
+              <div className="bg-slate-950 border border-slate-800 p-3 rounded-lg flex flex-col items-center justify-between gap-2 shadow">
+                <div className="flex items-center space-x-2 w-full justify-between overflow-x-auto">
+                  <span className="text-xs font-bold text-slate-300 whitespace-nowrap flex items-center gap-1">
+                    📅 排班日期:
+                  </span>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={e => handleDateChange(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded-md focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between w-full pt-1 border-t border-slate-800/80">
+                  <div className="flex items-center space-x-1">
+                    <span className="text-xs font-bold text-slate-300 whitespace-nowrap">班別:</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedShiftTime("日")}
+                      className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1 ${
+                        selectedShiftTime === "日"
+                          ? "bg-amber-500 text-slate-950 shadow-md scale-105"
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                      }`}
+                    >
+                      ☀️ 日班
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedShiftTime("夜")}
+                      className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1 ${
+                        selectedShiftTime === "夜"
+                          ? "bg-indigo-600 text-white shadow-md scale-105"
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                      }`}
+                    >
+                      🌙 夜班
+                    </button>
+                  </div>
+
+                  <div className="flex items-center space-x-1">
+                    <button
+                      type="button"
+                      onClick={() => handleDateChange(todayStr)}
+                      className={`px-2 py-1 rounded text-[11px] font-bold transition whitespace-nowrap ${
+                        selectedDate === todayStr
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                      }`}
+                    >
+                      今天
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDateChange(getOffsetDateStr(todayStr, 1))}
+                      className={`px-2 py-1 rounded text-[11px] font-bold transition whitespace-nowrap ${
+                        selectedDate === getOffsetDateStr(todayStr, 1)
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                      }`}
+                    >
+                      明天
+                    </button>
+                  </div>
+                </div>
+
+                <div className="w-full text-center pt-1 border-t border-slate-800/80">
+                  <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold border inline-block ${
+                    selectedDate === todayStr
+                      ? "bg-emerald-950 text-emerald-300 border-emerald-700"
+                      : selectedDate > todayStr
+                        ? "bg-purple-950 text-purple-300 border-purple-700"
+                        : "bg-slate-800 text-slate-400 border-slate-700"
                   }`}>
-                    {supabaseConnected ? `🟢 Supabase 雲端連線 (${realtimeMode})` : "🟡 單機 LocalStorage 模式"}
+                    {selectedDate === todayStr ? `🟢 今日 ${selectedShiftTime}班 (${currentShift})` : selectedDate > todayStr ? `🔮 未來 ${selectedShiftTime}班 (${currentShift})` : `📜 歷史 ${selectedShiftTime}班 (${currentShift})`}
                   </span>
                 </div>
               </div>
@@ -1268,6 +1403,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
               <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800">
                 <span>預設管理員密碼：<code className="text-blue-400 font-mono">0000</code></span>
                 <button
+                  type="button"
                   onClick={() => setShowSupabaseModal(true)}
                   className="text-blue-400 hover:underline flex items-center"
                 >
@@ -1431,7 +1567,33 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                   onChange={e => handleDateChange(e.target.value)}
                   className="bg-slate-950 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded-md focus:outline-none focus:border-blue-500 font-mono"
                 />
-                <div className="flex items-center space-x-1">
+
+                {/* 新增日班 / 夜班切換按鈕 */}
+                <div className="flex items-center space-x-1 border-l border-slate-800 pl-2 ml-1">
+                  <span className="text-xs font-bold text-slate-300 whitespace-nowrap">班別:</span>
+                  <button
+                    onClick={() => setSelectedShiftTime("日")}
+                    className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1 ${
+                      selectedShiftTime === "日"
+                        ? "bg-amber-500 text-slate-950 shadow-md scale-105"
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                    }`}
+                  >
+                    ☀️ 日班
+                  </button>
+                  <button
+                    onClick={() => setSelectedShiftTime("夜")}
+                    className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1 ${
+                      selectedShiftTime === "夜"
+                        ? "bg-indigo-600 text-white shadow-md scale-105"
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                    }`}
+                  >
+                    🌙 夜班
+                  </button>
+                </div>
+
+                <div className="flex items-center space-x-1 pl-1">
                   <button
                     onClick={() => handleDateChange(todayStr)}
                     className={`px-2.5 py-1 rounded text-xs font-bold transition whitespace-nowrap ${
@@ -1473,7 +1635,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                       ? "bg-purple-950 text-purple-300 border-purple-700"
                       : "bg-slate-800 text-slate-400 border-slate-700"
                 }`}>
-                  <span>{selectedDate === todayStr ? "🟢 今日實時排班" : selectedDate > todayStr ? "🔮 未來預排班表" : "📜 歷史排班紀錄"}</span>
+                  <span>{selectedDate === todayStr ? `🟢 今日 ${selectedShiftTime}班實時排班` : selectedDate > todayStr ? `🔮 未來 ${selectedShiftTime}班預排` : `📜 歷史 ${selectedShiftTime}班紀錄`}</span>
                 </span>
 
                 {userRole === 'admin' && selectedDate !== todayStr && (
@@ -1488,7 +1650,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
               </div>
             </div>
 
-            {}
+            {/* Metrics Counter Bar */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
                 <div className="text-xs text-purple-400 font-medium">應到人數 ({currentShift}當班)</div>
@@ -1520,6 +1682,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             </div>
 
             {}
+            {/* On-site Roll Call Table */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
                 <div className="flex items-center space-x-2">
@@ -1527,7 +1690,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                   <h2 className="text-xs font-bold text-slate-200 flex items-center gap-2">
                     📋 現場出勤點名表
                     <span className="text-[11px] font-normal text-slate-400">
-                      (依據排班表：左邊為當班「日/夜」，右邊為非上班日「G加班」支援)
+                      ({selectedDate} {selectedShiftTime}班 - 左側為當班班別，右側為休假班別 G 加班支援)
                     </span>
                   </h2>
                 </div>
@@ -1554,7 +1717,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                   <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/80">
                     <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-purple-400"></span>
-                      當班人員 (應到 {categorizedPersonnel.duty.length} 人 / 實到 {stats.dutyActualCount} 人)
+                      當班人員 ({currentShift}當班 - 應到 {categorizedPersonnel.duty.length} 人 / 實到 {stats.dutyActualCount} 人)
                     </span>
                     {userRole === 'admin' && (
                       <div className="space-x-1 text-[10px]">
@@ -1609,7 +1772,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                   <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/80">
                     <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                      支援人員 (加班出勤 {stats.overtimeCount} 人)
+                      支援人員 (非當班 - G加班出勤 {stats.overtimeCount} 人)
                     </span>
                     {userRole === 'admin' && (
                       <div className="space-x-1 text-[10px]">
@@ -1664,7 +1827,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
               </div>
             </div>
 
-            {}
+            {/* Filter & Search Toolbar */}
             <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-lg flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow">
               <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0">
                 <span className="text-xs font-medium text-slate-400 mr-1 whitespace-nowrap">類型篩選:</span>
@@ -1725,6 +1888,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             </div>
 
             {}
+            {/* Main Interactive Machine Grid */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                 <div className="flex items-center space-x-3 flex-wrap gap-y-1">
