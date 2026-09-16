@@ -63,7 +63,7 @@
 
     const IconClipboard = () => (
       <svg className="w-4 h-4 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1 2-2V6a2 2 0 0 1 2-2h2"></path>
         <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
       </svg>
     );
@@ -289,7 +289,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
     };
 
     function App() {
-      // Date State for Pre-scheduling
       const todayStr = useMemo(() => getTodayStr(), []);
       const [selectedDate, setSelectedDate] = useState(todayStr);
 
@@ -342,15 +341,42 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
       const [scheduledShifts, setScheduledShifts] = useState({});
 
-      const poolsMap = useMemo(() => ({
-        S1: squadRosters.S1,
-        S2: squadRosters.S2,
-        S3: squadRosters.S3,
-        S4: squadRosters.S4
-      }), [squadRosters]);
+      const getPersonScheduledShift = (squad, personName) => {
+        const [y, m, d] = selectedDate.split('-').map(Number);
+        const key = `${squad}_shift_${y}_${m}_${personName}_${d}`;
+        if (scheduledShifts[key] !== undefined && scheduledShifts[key] !== null) {
+          return scheduledShifts[key];
+        }
+        return getDefaultShift(squad, y, m, d);
+      };
 
-      const currentDutyPool = poolsMap[currentShift] || [];
-      const currentSupportPool = poolsMap[supportShift] || [];
+      const categorizedPersonnel = useMemo(() => {
+        const [y, m, d] = selectedDate.split('-').map(Number);
+        const duty = [];
+        const support = [];
+
+        ['S1', 'S2', 'S3', 'S4'].forEach(sq => {
+          const sqDefault = getDefaultShift(sq, y, m, d);
+          const members = squadRosters[sq] || [];
+
+          members.forEach(person => {
+            const sVal = getPersonScheduledShift(sq, person);
+            const isOnDutySquad = (sqDefault === '日' || sqDefault === '夜');
+            const isRegularShift = (sVal === '日' || sVal === '夜') || (isOnDutySquad && sVal !== 'G');
+
+            if (isRegularShift) {
+              duty.push({ name: person, squad: sq, schedShift: sVal || sqDefault });
+            } else {
+              support.push({ name: person, squad: sq, schedShift: sVal });
+            }
+          });
+        });
+
+        return { duty, support };
+      }, [selectedDate, squadRosters, scheduledShifts]);
+
+      const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
+      const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
       const [skillGroups, setSkillGroups] = useState(() => {
         const saved = localStorage.getItem("mfg_board_skill_groups_v4");
@@ -585,42 +611,33 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         loadShifts();
       }, [selectedDate, supabaseConnected]);
 
-      const getPersonScheduledShift = (squad, personName) => {
-        const [y, m, d] = selectedDate.split('-').map(Number);
-        const key = `${squad}_shift_${y}_${m}_${personName}_${d}`;
-        if (scheduledShifts[key] !== undefined && scheduledShifts[key] !== null) {
-          return scheduledShifts[key];
-        }
-        return getDefaultShift(squad, y, m, d);
-      };
-
       const handleLoadScheduleAttendance = () => {
         setAttendanceMap(prev => {
           const next = { ...prev };
           
-          currentDutyPool.forEach(person => {
-            const sVal = getPersonScheduledShift(currentShift, person);
+          categorizedPersonnel.duty.forEach(item => {
+            const sVal = item.schedShift;
             const isLeave = sVal && sVal !== '日' && sVal !== '夜';
             if (isLeave) {
-              next[person] = false;
+              next[item.name] = false;
             } else {
-              next[person] = true;
+              next[item.name] = true;
             }
           });
 
-          currentSupportPool.forEach(person => {
-            const sVal = getPersonScheduledShift(supportShift, person);
+          categorizedPersonnel.support.forEach(item => {
+            const sVal = item.schedShift;
             if (sVal === 'G') {
-              next[person] = true;
+              next[item.name] = true;
             } else {
-              next[person] = false;
+              next[item.name] = false;
             }
           });
 
           pushToSupabase({ attendanceMap: next });
           return next;
         });
-        showNotice(`已成功由捲繞排班表讀取 [${selectedDate}] 的 G 加班支援與請假名單！`, "success");
+        showNotice(`已成功根據 [${selectedDate}] 排班表更新當班與 G 加班支援出勤狀態！`, "success");
       };
 
       const handleDateChange = (targetDate) => {
@@ -867,7 +884,11 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
       const toggleAttendance = (name, isDuty) => {
         setAttendanceMap(prev => {
-          const schedShift = getPersonScheduledShift(isDuty ? currentShift : supportShift, name);
+          const itemObj = isDuty
+            ? categorizedPersonnel.duty.find(i => i.name === name)
+            : categorizedPersonnel.support.find(i => i.name === name);
+
+          const schedShift = itemObj ? itemObj.schedShift : null;
           const isLeave = isDuty ? (schedShift && schedShift !== '日' && schedShift !== '夜') : false;
           const defaultVal = isDuty ? !isLeave : (schedShift === 'G');
           const current = prev[name] !== undefined ? prev[name] : defaultVal;
@@ -941,35 +962,48 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       };
 
       const dutyCheckedCount = useMemo(() => {
-        return currentDutyPool.filter(p => {
-          if (attendanceMap[p] !== undefined) return attendanceMap[p];
-          const sVal = getPersonScheduledShift(currentShift, p);
+        return categorizedPersonnel.duty.filter(item => {
+          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+          const sVal = item.schedShift;
           return sVal && sVal !== '日' && sVal !== '夜' ? false : true;
         }).length;
-      }, [currentDutyPool, attendanceMap, currentShift, scheduledShifts, selectedDate]);
+      }, [categorizedPersonnel.duty, attendanceMap]);
 
       const supportCheckedCount = useMemo(() => {
-        return currentSupportPool.filter(p => {
-          if (attendanceMap[p] !== undefined) return attendanceMap[p];
-          const sVal = getPersonScheduledShift(supportShift, p);
+        return categorizedPersonnel.support.filter(item => {
+          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+          const sVal = item.schedShift;
           return sVal === 'G';
         }).length;
-      }, [currentSupportPool, attendanceMap, supportShift, scheduledShifts, selectedDate]);
+      }, [categorizedPersonnel.support, attendanceMap]);
 
       const unassignedPeople = useMemo(() => {
-        const dutyPresent = currentDutyPool.filter(p => {
-          if (attendanceMap[p] !== undefined) return attendanceMap[p];
-          const sVal = getPersonScheduledShift(currentShift, p);
+        const dutyPresent = categorizedPersonnel.duty.filter(item => {
+          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+          const sVal = item.schedShift;
           return sVal && sVal !== '日' && sVal !== '夜' ? false : true;
-        });
-        const supportPresent = currentSupportPool.filter(p => {
-          if (attendanceMap[p] !== undefined) return attendanceMap[p];
-          const sVal = getPersonScheduledShift(supportShift, p);
+        }).map(i => i.name);
+
+        const supportPresent = categorizedPersonnel.support.filter(item => {
+          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
+          const sVal = item.schedShift;
           return sVal === 'G';
-        });
+        }).map(i => i.name);
+
         const allPresent = [...dutyPresent, ...supportPresent];
         return allPresent.filter(p => !assignedMap[p]);
-      }, [currentDutyPool, currentSupportPool, attendanceMap, assignedMap, currentShift, supportShift, scheduledShifts, selectedDate]);
+      }, [categorizedPersonnel, attendanceMap, assignedMap]);
+
+      const stats = useMemo(() => {
+        const expectedCount = categorizedPersonnel.duty.length;
+        const dutyActualCount = dutyCheckedCount;
+        const overtimeCount = supportCheckedCount;
+        const actualCount = dutyCheckedCount + supportCheckedCount;
+        const running = machines.filter(m => m.mStatus === "正常運轉" && m.type !== "").length;
+        const down = machines.filter(m => m.mStatus === "設備異常" && m.type !== "").length;
+        const maint = machines.filter(m => m.mStatus === "停機保養" && m.type !== "").length;
+        return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint };
+      }, [categorizedPersonnel.duty, dutyCheckedCount, supportCheckedCount, machines]);
 
       const filteredMachines = useMemo(() => {
         const query = searchTerm.trim().toLowerCase();
@@ -990,18 +1024,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const q = groupSearchTerm.trim().toLowerCase();
         return skillGroups.filter(g => g.name.toLowerCase().includes(q));
       }, [skillGroups, groupSearchTerm]);
-
-      // 實到人數（現場） = 當班實到人數 (dutyCheckedCount) + 支援出勤人數 (supportCheckedCount)
-      const stats = useMemo(() => {
-        const expectedCount = currentDutyPool.length;
-        const dutyActualCount = dutyCheckedCount;
-        const overtimeCount = supportCheckedCount;
-        const actualCount = dutyCheckedCount + supportCheckedCount; // 當班實到 + 支援出勤
-        const running = machines.filter(m => m.mStatus === "正常運轉" && m.type !== "").length;
-        const down = machines.filter(m => m.mStatus === "設備異常" && m.type !== "").length;
-        const maint = machines.filter(m => m.mStatus === "停機保養" && m.type !== "").length;
-        return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint };
-      }, [currentDutyPool, dutyCheckedCount, supportCheckedCount, machines]);
 
       const handleRemovePersonnel = (machineId, role, e) => {
         if (e) e.stopPropagation();
@@ -1467,7 +1489,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             </div>
 
             {}
-            {/* KPI Summary Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
                 <div className="text-xs text-purple-400 font-medium">應到人數 ({currentShift}當班)</div>
@@ -1499,7 +1520,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             </div>
 
             {}
-            {/* On-site Roll Call Section */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
                 <div className="flex items-center space-x-2">
@@ -1507,7 +1527,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                   <h2 className="text-xs font-bold text-slate-200 flex items-center gap-2">
                     📋 現場出勤點名表
                     <span className="text-[11px] font-normal text-slate-400">
-                      ({currentShift}當班預設出勤 / {supportShift}支援人員：讀取排班表 "G" 加班狀態)
+                      (依據排班表：左邊為當班「日/夜」，右邊為非上班日「G加班」支援)
                     </span>
                   </h2>
                 </div>
@@ -1520,7 +1540,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                     <button
                       onClick={handleLoadScheduleAttendance}
                       className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded text-xs font-semibold shadow transition flex items-center gap-1"
-                      title="由 Supabase 捲繞排班表自動讀取當天預排 G 加班人員與請假紀錄"
+                      title="由 Supabase 排班表自動更新當日預排當班與 G 加班支援名單"
                     >
                       🔄 載入排班表支援/出勤名單
                     </button>
@@ -1529,12 +1549,12 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {/* On-Duty Shift Roll Call */}
+                {/* On-Duty Shift Roll Call (Left Side) */}
                 <div className="bg-slate-950/60 border border-purple-900/40 p-2 rounded-lg">
                   <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/80">
                     <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-purple-400"></span>
-                      {currentShift}當班 (應到 {currentDutyPool.length} 人 / 實到 {stats.dutyActualCount} 人)
+                      當班人員 (應到 {categorizedPersonnel.duty.length} 人 / 實到 {stats.dutyActualCount} 人)
                     </span>
                     {userRole === 'admin' && (
                       <div className="space-x-1 text-[10px]">
@@ -1545,8 +1565,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                     )}
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-1.5">
-                    {currentDutyPool.map(name => {
-                      const schedShift = getPersonScheduledShift(currentShift, name);
+                    {categorizedPersonnel.duty.map(item => {
+                      const name = item.name;
+                      const schedShift = item.schedShift;
                       const isLeave = schedShift && schedShift !== '日' && schedShift !== '夜';
                       const isChecked = attendanceMap[name] !== undefined ? attendanceMap[name] : !isLeave;
                       return (
@@ -1583,12 +1604,12 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                   </div>
                 </div>
 
-                {/* Support Shift Roll Call */}
+                {/* Support Shift Roll Call (Right Side) */}
                 <div className="bg-slate-950/60 border border-blue-900/40 p-2 rounded-lg">
                   <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/80">
                     <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                      {supportShift}支援 (加班出勤 {stats.overtimeCount} 人)
+                      支援人員 (加班出勤 {stats.overtimeCount} 人)
                     </span>
                     {userRole === 'admin' && (
                       <div className="space-x-1 text-[10px]">
@@ -1599,8 +1620,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                     )}
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-1.5">
-                    {currentSupportPool.map(name => {
-                      const schedShift = getPersonScheduledShift(supportShift, name);
+                    {categorizedPersonnel.support.map(item => {
+                      const name = item.name;
+                      const schedShift = item.schedShift;
                       const isOT = (schedShift === 'G');
                       const isLeave = schedShift && schedShift !== '日' && schedShift !== '夜' && !isOT;
                       const isChecked = attendanceMap[name] !== undefined ? attendanceMap[name] : isOT;
@@ -1643,7 +1665,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             </div>
 
             {}
-            {/* Filter Bar */}
             <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-lg flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow">
               <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0">
                 <span className="text-xs font-medium text-slate-400 mr-1 whitespace-nowrap">類型篩選:</span>
@@ -1703,7 +1724,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
               </div>
             </div>
 
-            {/* Dynamic Machine Board Table */}
+            {}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                 <div className="flex items-center space-x-3 flex-wrap gap-y-1">
@@ -2701,7 +2722,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                       </div>
 
                       <div>
-                        <label className="block text-slate-400 mb-1 font-medium font-medium">初始料況</label>
+                        <label className="block text-slate-400 mb-1 font-medium">初始料況</label>
                         <select
                           value={newMachine.matStatus}
                           onChange={e => setNewMachine({ ...newMachine, matStatus: e.target.value })}
