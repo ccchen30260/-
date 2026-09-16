@@ -317,6 +317,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem("mfg_supabase_url") || DEFAULT_SUPABASE_URL || "");
       const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem("mfg_supabase_key") || DEFAULT_SUPABASE_KEY || "");
       const [supabaseConnected, setSupabaseConnected] = useState(false);
+      const [supabaseErrorMsg, setSupabaseErrorMsg] = useState("");
       const [realtimeMode, setRealtimeMode] = useState("HTTP 輪詢模式");
       const [showSupabaseModal, setShowSupabaseModal] = useState(false);
       const supabaseRef = useRef(null);
@@ -483,6 +484,11 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
       }, [machines, machineTypes, currentShift, mStatusOptions, matStatusOptions, skillGroups, attendanceMap]);
 
+      // 排班日期快照 (schedulesMap) 也要保存到本機，避免尚未連上雲端前遺失資料
+      useEffect(() => {
+        localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
+      }, [schedulesMap]);
+
       useEffect(() => {
         if (!supabaseUrl || !supabaseKey || !window.supabase) {
           setSupabaseConnected(false);
@@ -534,7 +540,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             }
 
             try {
-              const { data } = await client.from('mfg_board').select('*').eq('id', 'global_state').single();
+              const { data, error } = await client.from('mfg_board').select('*').eq('id', 'global_state').single();
+              if (error) throw error;
               if (data && data.data) {
                 const cloudState = data.data;
                 if (cloudState.machines) setMachines(cloudState.machines);
@@ -547,8 +554,22 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 if (cloudState.schedulesMap) setSchedulesMap(cloudState.schedulesMap);
               }
               setSupabaseConnected(true);
+              setSupabaseErrorMsg("");
             } catch(e) {
-              setSupabaseConnected(true);
+              // 修正：之前無論成功或失敗都會被標記為「已連線」，導致使用者誤以為
+              // 資料已同步到雲端，但實際上可能是資料表不存在或 RLS 權限設定錯誤。
+              // 常見情況：查無 global_state 那一筆資料 (PGRST116)，這種情況視為
+              // 「連線成功但雲端尚無資料」，其餘錯誤才視為真正連線失敗。
+              const code = e && e.code;
+              if (code === 'PGRST116') {
+                // 資料表存在，只是還沒有 global_state 這筆資料 —— 視為連線成功
+                setSupabaseConnected(true);
+                setSupabaseErrorMsg("");
+              } else {
+                console.error("Supabase 資料讀取失敗，請確認資料表已建立且 RLS 權限允許存取：", e);
+                setSupabaseConnected(false);
+                setSupabaseErrorMsg((e && (e.message || e.hint || e.details)) || "無法連線至 Supabase，請確認網址、金鑰與資料表設定");
+              }
             }
           };
 
@@ -587,7 +608,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
           pollingInterval = setInterval(async () => {
             try {
-              const { data } = await client.from('mfg_board').select('data').eq('id', 'global_state').single();
+              const { data, error } = await client.from('mfg_board').select('data').eq('id', 'global_state').single();
+              if (error) throw error;
               if (data && data.data) {
                 const remote = data.data;
                 if (remote.machines) setMachines(remote.machines);
@@ -599,7 +621,12 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
                 if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
               }
-            } catch(pollErr) {}
+              setSupabaseConnected(true);
+            } catch(pollErr) {
+              if (pollErr && pollErr.code !== 'PGRST116') {
+                console.error("輪詢 Supabase 失敗：", pollErr);
+              }
+            }
           }, 5000);
 
           return () => {
@@ -611,11 +638,12 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         } catch(err) {
           console.error("Failed to initialize Supabase:", err);
           setSupabaseConnected(false);
+          setSupabaseErrorMsg((err && err.message) || "初始化 Supabase 用戶端失敗");
         }
       }, [supabaseUrl, supabaseKey]);
 
       const pushToSupabase = async (updatedFields) => {
-        if (!supabaseRef.current || !supabaseConnected) return;
+        if (!supabaseRef.current) return;
         try {
           const payloadState = {
             machines,
@@ -628,13 +656,19 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             schedulesMap,
             ...updatedFields
           };
-          await supabaseRef.current.from('mfg_board').upsert({
+          const { error } = await supabaseRef.current.from('mfg_board').upsert({
             id: 'global_state',
             data: payloadState,
             updated_at: new Date().toISOString()
           });
+          if (error) throw error;
+          setSupabaseConnected(true);
+          setSupabaseErrorMsg("");
         } catch(err) {
           console.error("Failed to push state to Supabase:", err);
+          setSupabaseConnected(false);
+          setSupabaseErrorMsg((err && (err.message || err.hint || err.details)) || "寫入 Supabase 失敗，資料僅保留在本機");
+          showNotice("⚠️ 雲端同步失敗，此變更僅儲存在本機，請檢查 Supabase 連線設定", "error");
         }
       };
 
@@ -683,25 +717,35 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         showNotice(`已成功根據 [${selectedDate} ${selectedShiftTime}班] 排班表更新當班與 G 加班支援出勤狀態！`, "success");
       };
 
+      // 修正：換日期時，把「切換前那一天」的完整看板快照存進 schedulesMap，
+      // 並且立即把更新後的 schedulesMap 推送到 Supabase，這樣其他裝置
+      // 切換到相同日期時，才能抓到最新版本，而不是各自裝置本機的舊快照。
       const handleDateChange = (targetDate) => {
         if (targetDate === selectedDate) return;
 
-        setSchedulesMap(prevMap => {
-          const currentSnap = { machines, currentShift, attendanceMap };
-          const updatedMap = { ...prevMap, [selectedDate]: currentSnap };
+        const currentSnap = { machines, currentShift, attendanceMap };
+        const updatedMap = { ...schedulesMap, [selectedDate]: currentSnap };
 
-          const targetData = updatedMap[targetDate];
-          if (targetData) {
-            setMachines(targetData.machines || DEFAULT_MACHINES);
-            setCurrentShift(targetData.currentShift || "S4");
-            setAttendanceMap(targetData.attendanceMap || {});
-          } else {
-            setMachines(DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" })));
-            setCurrentShift("S4");
-            setAttendanceMap({});
-          }
+        const targetData = updatedMap[targetDate];
+        if (targetData) {
+          setMachines(targetData.machines || DEFAULT_MACHINES);
+          setCurrentShift(targetData.currentShift || "S4");
+          setAttendanceMap(targetData.attendanceMap || {});
+        } else {
+          setMachines(DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" })));
+          setCurrentShift("S4");
+          setAttendanceMap({});
+        }
 
-          return updatedMap;
+        setSchedulesMap(updatedMap);
+        // 注意：pushToSupabase 內部會用「呼叫當下」的 state closure 組成 payload，
+        // 這裡明確帶入 schedulesMap 與（切換前一天的）machines/attendanceMap，
+        // 確保切換前那天的資料確實被寫入雲端，而不是遺留在單一裝置的本機端。
+        pushToSupabase({
+          schedulesMap: updatedMap,
+          machines: currentSnap.machines,
+          currentShift: currentSnap.currentShift,
+          attendanceMap: currentSnap.attendanceMap
         });
 
         setSelectedDate(targetDate);
@@ -727,7 +771,12 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             ...prev,
             [selectedDate]: { machines: copiedMachines, currentShift: copiedShift, attendanceMap: copiedAttendance }
           };
-          pushToSupabase({ schedulesMap: updated });
+          pushToSupabase({
+            schedulesMap: updated,
+            machines: copiedMachines,
+            currentShift: copiedShift,
+            attendanceMap: copiedAttendance
+          });
           return updated;
         });
 
@@ -1280,6 +1329,11 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 <p className="text-xs text-slate-400">
                   GitHub & Supabase 雲端實時同步系統
                 </p>
+                {!supabaseConnected && supabaseErrorMsg && (
+                  <p className="text-[11px] text-amber-400 bg-amber-950/60 border border-amber-800 rounded px-2 py-1 mt-1">
+                    ⚠️ 雲端尚未連線：{supabaseErrorMsg}
+                  </p>
+                )}
               </div>
 
               {/* Date & Shift Time Selector Bar */}
@@ -1468,9 +1522,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                             ? 'bg-emerald-950 text-emerald-300 border-emerald-700 hover:bg-emerald-900' 
                             : 'bg-amber-950 text-amber-300 border-amber-700 hover:bg-amber-900'
                         }`}
-                        title="點擊設定 Supabase 雲端資料庫"
+                        title={supabaseConnected ? "點擊設定 Supabase 雲端資料庫" : (supabaseErrorMsg || "點擊設定 Supabase 雲端資料庫")}
                       >
-                        <IconCloud /> {supabaseConnected ? `雲端連線 (${realtimeMode})` : "單機模式"}
+                        <IconCloud /> {supabaseConnected ? `雲端連線 (${realtimeMode})` : "單機模式 (未連線)"}
                       </button>
                     </h1>
                   </div>
@@ -2225,6 +2279,16 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+                  <div className={`p-2.5 rounded-lg border text-[11px] leading-relaxed ${
+                    supabaseConnected
+                      ? "bg-emerald-950/60 border-emerald-800 text-emerald-300"
+                      : "bg-amber-950/60 border-amber-800 text-amber-300"
+                  }`}>
+                    {supabaseConnected
+                      ? `✅ 目前狀態：已成功連線至雲端資料庫 (${realtimeMode})`
+                      : `⚠️ 目前狀態：尚未連線${supabaseErrorMsg ? `　原因：${supabaseErrorMsg}` : ""}`}
+                  </div>
+
                   <form onSubmit={handleSaveSupabaseCredentials} className="space-y-3">
                     <div>
                       <label className="block text-slate-300 font-semibold mb-1">1. Supabase Project URL</label>
@@ -2268,6 +2332,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       value={SQL_SETUP_SCRIPT}
                       className="w-full h-32 bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-[10px] p-2.5 rounded focus:outline-none"
                     />
+                    <p className="text-slate-500 text-[10px] leading-relaxed">
+                      💡 若「單機模式」的提示一直不消失，最常見原因是這段 SQL 還沒執行過，或是 RLS 政策未套用成功，請至 Supabase 後台 Table Editor 確認 mfg_board 資料表是否存在。
+                    </p>
                   </div>
                 </div>
 
