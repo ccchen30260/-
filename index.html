@@ -376,22 +376,22 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const squads = ['S1', 'S2', 'S3', 'S4'];
         const dutySquad = squads.find(sq => getDefaultShift(sq, y, m, d) === selectedShiftTime) || currentShift;
 
-        squads.forEach(sq => {
-          const members = squadRosters[sq] || [];
-          const isOnDutySquad = (sq === dutySquad);
+        // 依據當班班別，精確對應 1 個加班支援班別 (S1<->S3, S2<->S4)
+        const targetSupportSquad = SHIFT_PAIR_MAP[dutySquad] || "S2";
 
-          members.forEach(person => {
-            const sVal = getPersonScheduledShift(sq, person);
-
-            if (isOnDutySquad) {
-              duty.push({ name: person, squad: sq, schedShift: sVal || selectedShiftTime });
-            } else {
-              support.push({ name: person, squad: sq, schedShift: sVal });
-            }
-          });
+        const dutyMembers = squadRosters[dutySquad] || [];
+        dutyMembers.forEach(person => {
+          const sVal = getPersonScheduledShift(dutySquad, person);
+          duty.push({ name: person, squad: dutySquad, schedShift: sVal || selectedShiftTime });
         });
 
-        return { duty, support, dutySquad };
+        const supportMembers = squadRosters[targetSupportSquad] || [];
+        supportMembers.forEach(person => {
+          const sVal = getPersonScheduledShift(targetSupportSquad, person);
+          support.push({ name: person, squad: targetSupportSquad, schedShift: sVal });
+        });
+
+        return { duty, support, dutySquad, supportSquad: targetSupportSquad };
       }, [selectedDate, selectedShiftTime, currentShift, squadRosters, scheduledShifts]);
 
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
@@ -1717,7 +1717,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/80">
                     <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-purple-400"></span>
-                      當班人員 ({currentShift}當班 - 應到 {categorizedPersonnel.duty.length} 人 / 實到 {stats.dutyActualCount} 人)
+                      當班人員 ({categorizedPersonnel.dutySquad}當班 - 應到 {categorizedPersonnel.duty.length} 人 / 實到 {stats.dutyActualCount} 人)
                     </span>
                     {userRole === 'admin' && (
                       <div className="space-x-1 text-[10px]">
@@ -1772,7 +1772,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/80">
                     <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                      支援人員 (非當班 - G加班出勤 {stats.overtimeCount} 人)
+                      支援人員 ({categorizedPersonnel.supportSquad}支援 - G加班出勤 {stats.overtimeCount} 人)
                     </span>
                     {userRole === 'admin' && (
                       <div className="space-x-1 text-[10px]">
