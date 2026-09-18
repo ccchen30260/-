@@ -543,6 +543,27 @@
         return skillGroups.filter(g => g.name.toLowerCase().includes(q));
       }, [skillGroups, groupSearchTerm]);
 
+      // 動態計算有人操機的機台與料況/型號統計 (要有人操機才算)
+      const mannedSummaryText = useMemo(() => {
+        const manned = machines.filter(m => m.operator && m.operator.trim() !== "");
+        if (manned.length === 0) return "";
+
+        const groups = {};
+        manned.forEach(m => {
+          const type = m.type || "通用";
+          const mat = m.matStatus || "";
+          const key = `${type}__${mat}`;
+          if (!groups[key]) {
+            groups[key] = { type, mat, count: 0 };
+          }
+          groups[key].count += 1;
+        });
+
+        return Object.values(groups)
+          .map(g => g.mat ? `${g.type}．${g.mat}*${g.count}` : `${g.type}*${g.count}`)
+          .join("；");
+      }, [machines]);
+
       useEffect(() => {
         const timer = setInterval(() => {
           setCurrentTime(new Date().toLocaleString('zh-TW', { hour12: false }));
@@ -1920,6 +1941,14 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       機台動態看板
                     </h2>
                   </div>
+
+                  {/* 顯示實時操機與產品型號統計 (要有人操機才算) */}
+                  {mannedSummaryText && (
+                    <span className="text-xs text-amber-300 font-mono bg-slate-950 px-2 py-0.5 rounded border border-amber-900/60 font-semibold">
+                      {mannedSummaryText}
+                    </span>
+                  )}
+
                   <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1.5 border transition ${
                     unassignedPeople.length > 0 
                       ? "bg-amber-950/80 text-amber-300 border-amber-700/60" 
@@ -1933,11 +1962,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       </span>
                     )}
                   </span>
-                </div>
-                <div className="text-xs text-slate-400">
-                  {userRole === 'admin' 
-                    ? '💡 提示：點擊操作員/預備員/機況/料況欄位即可快速設定'
-                    : '👁️ 檢視模式：現場實時一面看板總覽'}
                 </div>
               </div>
 
