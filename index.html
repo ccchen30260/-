@@ -477,6 +477,23 @@
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
+      // 全系統統一出勤判定函式 (適用於點名表、數據統計與快速指派視窗)
+      const isPersonPresent = (personName, isDuty) => {
+        if (attendanceMap[personName] !== undefined) {
+          return !!attendanceMap[personName];
+        }
+        const itemObj = isDuty
+          ? categorizedPersonnel.duty.find(i => i.name === personName)
+          : categorizedPersonnel.support.find(i => i.name === personName);
+        if (!itemObj) return false;
+        const sVal = itemObj.schedShift;
+        if (isDuty) {
+          return !['特', '病', '事', '公', '喪', '未'].includes(sVal);
+        } else {
+          return sVal === 'G';
+        }
+      };
+
       useEffect(() => {
         if (!supabaseUrl || !supabaseKey || !window.supabase) {
           setSupabaseConnected(false);
@@ -640,15 +657,11 @@
 
         const nextAttendance = {};
         categorizedPersonnel.duty.forEach(item => {
-          const sVal = item.schedShift;
-          const isLeave = ['特', '病', '事', '公', '喪', '未'].includes(sVal);
-          nextAttendance[item.name] = !isLeave;
+          nextAttendance[item.name] = isPersonPresent(item.name, true);
         });
 
         categorizedPersonnel.support.forEach(item => {
-          const sVal = item.schedShift;
-          const isOvertime = (sVal === 'G');
-          nextAttendance[item.name] = isOvertime;
+          nextAttendance[item.name] = isPersonPresent(item.name, false);
         });
 
         setAttendanceMap(nextAttendance);
@@ -937,14 +950,7 @@
 
       const toggleAttendance = (name, isDuty) => {
         setAttendanceMap(prev => {
-          const itemObj = isDuty
-            ? categorizedPersonnel.duty.find(i => i.name === name)
-            : categorizedPersonnel.support.find(i => i.name === name);
-
-          const schedShift = itemObj ? itemObj.schedShift : null;
-          const isLeave = isDuty ? ['特', '病', '事', '公', '喪', '未'].includes(schedShift) : false;
-          const defaultVal = isDuty ? !isLeave : (schedShift === 'G');
-          const current = prev[name] !== undefined ? prev[name] : defaultVal;
+          const current = isPersonPresent(name, isDuty);
           const nextVal = !current;
 
           if (!nextVal) {
@@ -1005,31 +1011,16 @@
       };
 
       const dutyCheckedCount = useMemo(() => {
-        return categorizedPersonnel.duty.filter(item => {
-          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          const sVal = item.schedShift;
-          return ['特', '病', '事', '公', '喪', '未'].includes(sVal) ? false : true;
-        }).length;
+        return categorizedPersonnel.duty.filter(item => isPersonPresent(item.name, true)).length;
       }, [categorizedPersonnel.duty, attendanceMap]);
 
       const supportCheckedCount = useMemo(() => {
-        return categorizedPersonnel.support.filter(item => {
-          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          return item.schedShift === 'G';
-        }).length;
+        return categorizedPersonnel.support.filter(item => isPersonPresent(item.name, false)).length;
       }, [categorizedPersonnel.support, attendanceMap]);
 
       const unassignedPeople = useMemo(() => {
-        const dutyPresent = categorizedPersonnel.duty.filter(item => {
-          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          const sVal = item.schedShift;
-          return ['特', '病', '事', '公', '喪', '未'].includes(sVal) ? false : true;
-        }).map(i => i.name);
-
-        const supportPresent = categorizedPersonnel.support.filter(item => {
-          if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-          return item.schedShift === 'G';
-        }).map(i => i.name);
+        const dutyPresent = categorizedPersonnel.duty.filter(item => isPersonPresent(item.name, true)).map(i => i.name);
+        const supportPresent = categorizedPersonnel.support.filter(item => isPersonPresent(item.name, false)).map(i => i.name);
 
         const allPresent = [...dutyPresent, ...supportPresent];
         return allPresent.filter(p => !assignedMap[p]);
@@ -1045,14 +1036,12 @@
         const down = machines.filter(m => m.mStatus === "設備異常" && isCountedMachine(m)).length;
         const maint = machines.filter(m => m.mStatus === "停機保養" && isCountedMachine(m)).length;
         
-        // 待料停機機台數（包含待料中、待正極片、待負極片、待TRAY停機等狀態）
         const isWaitingMaterial = m => m.matStatus && (m.matStatus.startsWith("待") || m.matStatus === "待料中");
         const waitingMaterial = machines.filter(m => isWaitingMaterial(m) && isCountedMachine(m)).length;
 
         return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint, waitingMaterial };
       }, [categorizedPersonnel.duty, dutyCheckedCount, supportCheckedCount, machines]);
 
-      // 計算有操機人員的機台類型與料況/型號統計 (排除 "通用" 類型)
       const machineModelCountsText = useMemo(() => {
         const counts = {};
         machines.forEach(m => {
@@ -1187,18 +1176,11 @@
 
       const generateReportText = () => {
         const dutyPresentNames = categorizedPersonnel.duty
-          .filter(item => {
-            if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-            const sVal = item.schedShift;
-            return ['特', '病', '事', '公', '喪', '未'].includes(sVal) ? false : true;
-          })
+          .filter(item => isPersonPresent(item.name, true))
           .map(i => i.name);
 
         const supportPresentNames = categorizedPersonnel.support
-          .filter(item => {
-            if (attendanceMap[item.name] !== undefined) return attendanceMap[item.name];
-            return item.schedShift === 'G';
-          })
+          .filter(item => isPersonPresent(item.name, false))
           .map(i => i.name);
 
         const assignedList = machines
@@ -1470,7 +1452,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           <main className="max-w-7xl mx-auto w-full p-4 flex-1 flex flex-col gap-4">
             
             {/* Date Selector & Shift Selector Bar */}
@@ -1592,7 +1573,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {}
             {/* On-site Roll Call Table */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
@@ -1601,7 +1581,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   <h2 className="text-xs font-bold text-slate-200 flex items-center gap-2">
                     📋 現場出勤點名表
                     <span className="text-[11px] font-normal text-slate-400">
-                      ({selectedDate} {selectedShiftTime}班 - 當班請假則不勾選；支援加班則自動勾選)
+                      ({selectedDate} {selectedShiftTime}班 - 當班請假則不勾選；支援人員有加班預設勾選)
                     </span>
                   </h2>
                 </div>
@@ -1634,7 +1614,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       const name = item.name;
                       const schedShift = item.schedShift;
                       const isLeave = ['特', '病', '事', '公', '喪', '未'].includes(schedShift);
-                      const isChecked = attendanceMap[name] !== undefined ? attendanceMap[name] : !isLeave;
+                      const isChecked = isPersonPresent(name, true);
                       return (
                         <label
                           key={name}
@@ -1690,7 +1670,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       const schedShift = item.schedShift;
                       const isOT = (schedShift === 'G');
                       const isLeave = ['特', '病', '事', '公', '喪', '未'].includes(schedShift);
-                      const isChecked = attendanceMap[name] !== undefined ? attendanceMap[name] : isOT;
+                      const isChecked = isPersonPresent(name, false);
                       return (
                         <label
                           key={name}
@@ -1789,7 +1769,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {}
             {/* Main Interactive Machine Grid */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
@@ -2058,7 +2037,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
-          {}
           {/* Unsaved Changes Guard Prompt Modal */}
           {showUnsavedPrompt && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2118,7 +2096,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           {/* Quick Assign Personnel Modal */}
           {assignModal.open && (
             <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2127,6 +2104,8 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   const targetM = machines.find(m => m.id === assignModal.machineId);
                   const matchingGroups = targetM ? getMatchingSkillGroups(targetM.name) : [];
                   const qualifiedMembersSet = new Set(matchingGroups.flatMap(g => g.members));
+
+                  const supportPresentCount = currentSupportPool.filter(p => isPersonPresent(p, false)).length;
 
                   return (
                     <>
@@ -2174,7 +2153,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 activeTabPool === "support" ? "bg-blue-600 text-white font-bold" : "bg-slate-800 text-slate-400"
                               }`}
                             >
-                              {categorizedPersonnel.supportSquad}支援
+                              {categorizedPersonnel.supportSquad}支援 {supportPresentCount > 0 && `(${supportPresentCount}人到工)`}
                             </button>
                           </div>
 
@@ -2195,7 +2174,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                           {(() => {
                             const isDutyTab = activeTabPool === "duty";
                             const activePool = isDutyTab ? currentDutyPool : currentSupportPool;
-                            const basePool = activePool.filter(person => isDutyTab ? attendanceMap[person] !== false : !!attendanceMap[person]);
+                            
+                            // 精確統一篩選目前已出勤（包括點名表勾選與 G 加班）的人員
+                            const basePool = activePool.filter(person => isPersonPresent(person, isDutyTab));
 
                             const hasGroupRestriction = matchingGroups.length > 0 && !allowCrossGroup;
                             const availablePersons = hasGroupRestriction
@@ -2215,7 +2196,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                   ) : (
                                     <>
                                       ⚠️ 此組別當前無出勤人員<br/>
-                                      <span className="text-[10px] text-slate-500">(請先於「現場出勤點名表」勾選出勤)</span>
+                                      <span className="text-[10px] text-slate-500">(請先於「現場出勤點名表」確認勾選出勤)</span>
                                     </>
                                   )}
                                 </div>
@@ -2265,7 +2246,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           {/* Skill Groups Management Modal */}
           {showGroupModal && (
             <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2484,7 +2464,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           {/* Machine & Material Status Options Modal */}
           {statusModal.open && (
             <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2635,7 +2614,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           {/* Export Report Modal */}
           {showExportModal && (
             <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2876,7 +2854,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           {/* Password Change Modal */}
           {showChangePwModal && (
             <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
