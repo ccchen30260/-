@@ -537,20 +537,20 @@
         });
       }, [machines, filterType, filterStatus, searchTerm]);
 
-      const filteredSkillGroups = useMemo(() => {
-        if (!groupSearchTerm.trim()) return skillGroups;
-        const q = groupSearchTerm.trim().toLowerCase();
-        return skillGroups.filter(g => g.name.toLowerCase().includes(q));
-      }, [skillGroups, groupSearchTerm]);
-
-      // 動態計算有人操機的機台與料況/型號統計 (要有人操機才算)
+      // 動態計算有人操機的機台與料況/型號統計 (要有人操機才算，且排除通用/無類型機台)
       const mannedSummaryText = useMemo(() => {
-        const manned = machines.filter(m => m.operator && m.operator.trim() !== "");
+        const manned = machines.filter(m => 
+          m.operator && 
+          m.operator.trim() !== "" && 
+          m.type && 
+          m.type.trim() !== "" && 
+          m.type !== "通用"
+        );
         if (manned.length === 0) return "";
 
         const groups = {};
         manned.forEach(m => {
-          const type = m.type || "通用";
+          const type = m.type;
           const mat = m.matStatus || "";
           const key = `${type}__${mat}`;
           if (!groups[key]) {
