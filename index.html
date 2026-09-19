@@ -872,6 +872,17 @@
 
       const currentShiftKey = `${selectedDate}_${selectedShiftTime}`;
 
+      // 計算維修分鐘數
+      const getMaintDuration = (start, end) => {
+        if (!start || !end) return "";
+        const [sh, sm] = start.split(":").map(Number);
+        const [eh, em] = end.split(":").map(Number);
+        if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return "";
+        let diff = (eh * 60 + em) - (sh * 60 + sm);
+        if (diff < 0) diff += 24 * 60; // 支援跨夜計算
+        return `(${diff}分)`;
+      };
+
       const handleAddOrUpdateMaintLog = (e) => {
         e.preventDefault();
         if (!newMaintForm.issue.trim()) {
@@ -904,7 +915,7 @@
           showNotice(`已新增 [${maintModal.machineName}] 維修異常紀錄`, "success");
         }
 
-        // 自動變更機況：如果設備未完修 (還沒有結束時間 endTime)，機況自動選擇 "設備異常"
+        // 自動變更機況：若未完修 (無結束時間)，機況自動選擇 "設備異常"；若已完修 (有結束時間)，機況自動選擇 "正常運轉"
         let updatedMachines = machines;
         if (!newMaintForm.endTime || !newMaintForm.endTime.trim()) {
           updatedMachines = machines.map(m =>
@@ -912,6 +923,12 @@
           );
           setMachines(updatedMachines);
           showNotice(`機台 [${maintModal.machineName}] 未完修，機況已自動切換為「設備異常」`, "info");
+        } else {
+          updatedMachines = machines.map(m =>
+            m.name === maintModal.machineName ? { ...m, mStatus: "正常運轉" } : m
+          );
+          setMachines(updatedMachines);
+          showNotice(`機台 [${maintModal.machineName}] 已完修，機況已自動切換為「正常運轉」`, "info");
         }
 
         setMaintenanceLogs(updatedLogs);
@@ -2324,7 +2341,10 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                     <span className="font-bold text-slate-100 text-sm">{log.issue}</span>
                                   </div>
                                   <div className="text-[11px] text-slate-400 font-mono flex items-center gap-3">
-                                    <span>⏱ 時間：{log.startTime || '--:--'} ~ {log.endTime || '進行中'}</span>
+                                    <span>
+                                      ⏱ 時間：{log.startTime || '--:--'} ~ {log.endTime || '進行中'}
+                                      {log.startTime && log.endTime ? getMaintDuration(log.startTime, log.endTime) : ''}
+                                    </span>
                                     {log.note && <span className="text-slate-300">💬 備註：{log.note}</span>}
                                   </div>
                                 </div>
