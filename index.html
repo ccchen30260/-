@@ -235,7 +235,7 @@
       { label: "暗夜黑 (停用/停產)", color: "bg-zinc-800 text-zinc-200 border-zinc-600", badge: "bg-zinc-500" }
     ];
 
-    // 更新機台順序：
+    // 機台順序：
     // 通用 (領班/QC/搬運/折彎) -> Kaido (W32~W39, W45) -> 先導 (W42~W44) -> 羅得B (W31, W40) -> 覆捲機 (RW05~RW19)
     const DEFAULT_MACHINES = [
       { id: "m-01", type: "", name: "領班", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
@@ -375,12 +375,17 @@
 
       const [confirmDialog, setConfirmDialog] = useState({ open: false, title: "", message: "", onConfirm: null });
 
+      // Filters & Search
       const [filterType, setFilterType] = useState("ALL");
       const [filterStatus, setFilterStatus] = useState("ALL");
+      const [filterMatStatus, setFilterMatStatus] = useState("ALL"); // 新增依「料況」篩選
       const [searchTerm, setSearchTerm] = useState("");
       const [groupSearchTerm, setGroupSearchTerm] = useState("");
       const [activeTabPool, setActiveTabPool] = useState("duty");
       const [noticeMessage, setNoticeMessage] = useState(null);
+
+      // Drag and Drop state
+      const [draggedMachineId, setDraggedMachineId] = useState(null);
 
       const [assignModal, setAssignModal] = useState({ open: false, machineId: null, role: null });
       const [statusModal, setStatusModal] = useState({ open: false, machineId: null, type: null });
@@ -403,7 +408,7 @@
       const [pendingAction, setPendingAction] = useState(null);
       const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
 
-      // 只有管理員權限時，才計算是否有未儲存變更 (isDirty)
+      // 管理員未儲存狀態計算
       const isDirty = useMemo(() => {
         if (userRole !== 'admin') return false;
         if (!savedSnapshot) return false;
@@ -483,8 +488,7 @@
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
-      // 全系統統一出勤判定函式：
-      // 當班請假（特/病/事/公/喪/未/忌/休）則預設不勾選；支援人員排班標示為 G 時自動預設勾選
+      // 全系統統一出勤判定函式
       const isPersonPresent = (personName, isDuty) => {
         if (attendanceMap[personName] !== undefined) {
           return !!attendanceMap[personName];
@@ -654,7 +658,6 @@
         loadShifts();
       }, [selectedDate, supabaseConnected]);
 
-      // 當切換日期/班別或讀取完當天 Supabase 排班資料時，自動依排班表精確初始化點名（當班請假不勾選；支援 G 加班自動勾選）
       useEffect(() => {
         const shiftKey = `${selectedDate}_${selectedShiftTime}`;
         const existingSnap = schedulesMap[shiftKey];
@@ -811,6 +814,33 @@
         setPwForm({ oldPw: "", newPw: "", confirmPw: "" });
         setPwError("");
         showNotice("密碼已成功更新！", "success");
+      };
+
+      const moveMachineRow = (fromId, toId) => {
+        if (!fromId || !toId || fromId === toId) return;
+        const fromIndex = machines.findIndex(m => m.id === fromId);
+        const toIndex = machines.findIndex(m => m.id === toId);
+        if (fromIndex < 0 || toIndex < 0) return;
+
+        const updated = [...machines];
+        const [moved] = updated.splice(fromIndex, 1);
+        updated.splice(toIndex, 0, moved);
+
+        setMachines(updated);
+        showNotice(`已調整機台 [${moved.name}] 之順序`, "info");
+      };
+
+      const moveMachineByOffset = (machineId, offset) => {
+        const index = machines.findIndex(m => m.id === machineId);
+        if (index < 0) return;
+        const targetIndex = index + offset;
+        if (targetIndex < 0 || targetIndex >= machines.length) return;
+
+        const updated = [...machines];
+        const [moved] = updated.splice(index, 1);
+        updated.splice(targetIndex, 0, moved);
+
+        setMachines(updated);
       };
 
       const handleAddMachineType = () => {
@@ -1042,7 +1072,6 @@
         return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint, waitingMaterial };
       }, [categorizedPersonnel.duty, dutyCheckedCount, supportCheckedCount, machines]);
 
-      // 動態統計「有人操機才算」且排除「通用」類型的機台型號數量
       const machineModelCountsText = useMemo(() => {
         const counts = {};
         machines.forEach(m => {
@@ -1060,14 +1089,19 @@
         return machines.filter(m => {
           const matchType = filterType === "ALL" || m.type === filterType;
           const matchStatus = filterStatus === "ALL" || m.mStatus === filterStatus;
+          const matchMatStatus = filterMatStatus === "ALL" 
+            ? true 
+            : filterMatStatus === "UNSET" 
+              ? !m.matStatus 
+              : m.matStatus === filterMatStatus;
           const matchSearch = !query || 
             m.name.toLowerCase().includes(query) ||
-            m.type.toLowerCase().includes(query) ||
+            (m.type && m.type.toLowerCase().includes(query)) ||
             (m.operator && m.operator.toLowerCase().includes(query)) ||
             (m.backup && m.backup.toLowerCase().includes(query));
-          return matchType && matchStatus && matchSearch;
+          return matchType && matchStatus && matchMatStatus && matchSearch;
         });
-      }, [machines, filterType, filterStatus, searchTerm]);
+      }, [machines, filterType, filterStatus, filterMatStatus, searchTerm]);
 
       const filteredSkillGroups = useMemo(() => {
         const validList = Array.isArray(skillGroups) && skillGroups.length > 0 ? skillGroups : DEFAULT_SKILL_GROUPS;
@@ -1710,9 +1744,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {/* Filter & Search Toolbar */}
-            <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-lg flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow">
-              <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0">
+            {/* Filter & Search Toolbar (新增依料況篩選下拉選單) */}
+            <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-lg flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 shadow">
+              <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 lg:pb-0">
                 <span className="text-xs font-medium text-slate-400 mr-1 whitespace-nowrap">類型篩選:</span>
                 <button
                   onClick={() => setFilterType("ALL")}
@@ -1735,7 +1769,8 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 ))}
               </div>
 
-              <div className="flex items-center gap-2 flex-1 md:max-w-md">
+              <div className="flex flex-wrap items-center gap-2 flex-1 lg:max-w-xl justify-end">
+                {/* 1. 全部機況下拉選單 */}
                 <select
                   value={filterStatus}
                   onChange={e => setFilterStatus(e.target.value)}
@@ -1747,7 +1782,21 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   ))}
                 </select>
 
-                <div className="relative flex-1">
+                {/* 2. 新增依【料況】篩選下拉選單 */}
+                <select
+                  value={filterMatStatus}
+                  onChange={e => setFilterMatStatus(e.target.value)}
+                  className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-blue-500"
+                >
+                  <option value="ALL">全部料況</option>
+                  <option value="UNSET">未設定料況</option>
+                  {matStatusOptions.map(opt => (
+                    <option key={opt.id} value={opt.label}>{opt.label}</option>
+                  ))}
+                </select>
+
+                {/* 3. 搜尋欄位 */}
+                <div className="relative flex-1 min-w-[140px]">
                   <input
                     type="text"
                     placeholder="搜尋機台或人員姓名..."
@@ -1770,7 +1819,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {/* Main Interactive Machine Grid */}
+            {/* Main Interactive Machine Grid (含整列自由拖曳與上下排序功能) */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                 <div className="flex items-center space-x-3 flex-wrap gap-y-1">
@@ -1801,6 +1850,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 </div>
               </div>
 
+              {}
               {(() => {
                 let split = Math.ceil(filteredMachines.length / 2);
                 while (split < filteredMachines.length) {
@@ -1821,6 +1871,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       <table className="w-full text-left border-collapse">
                         <thead className="bg-slate-950 text-slate-300 text-[11px] sticky top-0 z-10 shadow border-b border-slate-800">
                           <tr>
+                            <th className="p-1 font-semibold w-8 text-center" title="整列拖曳/排序">順序</th>
                             <th className="p-1.5 font-semibold w-16">類型</th>
                             <th className="p-1.5 font-semibold w-14">機台</th>
                             <th className="p-1.5 font-semibold">操作員</th>
@@ -1835,7 +1886,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                         <tbody className="divide-y divide-slate-800/60 text-[11px]">
                           {subMachines.length === 0 ? (
                             <tr>
-                              <td colSpan={userRole === 'admin' ? 7 : 6} className="text-center py-6 text-slate-500">
+                              <td colSpan={userRole === 'admin' ? 8 : 7} className="text-center py-6 text-slate-500">
                                 無機台資料
                               </td>
                             </tr>
@@ -1856,8 +1907,55 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 }
                               }
 
+                              const isBeingDragged = draggedMachineId === machine.id;
+
                               return (
-                                <tr key={machine.id} className="hover:bg-slate-800/40 transition">
+                                <tr 
+                                  key={machine.id} 
+                                  draggable={userRole === 'admin'}
+                                  onDragStart={(e) => {
+                                    e.dataTransfer.setData('text/plain', machine.id);
+                                    setDraggedMachineId(machine.id);
+                                  }}
+                                  onDragOver={(e) => e.preventDefault()}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    const fromId = e.dataTransfer.getData('text/plain') || draggedMachineId;
+                                    moveMachineRow(fromId, machine.id);
+                                    setDraggedMachineId(null);
+                                  }}
+                                  className={`hover:bg-slate-800/40 transition ${isBeingDragged ? 'opacity-30 bg-blue-900/50' : ''}`}
+                                >
+                                  {/* 整列自由排序 Drag & Drop 手把及上下按鈕 */}
+                                  <td className="p-1 text-center select-none bg-slate-950/40 border-r border-slate-800/50">
+                                    <div className="flex items-center justify-center space-x-0.5 text-slate-500 hover:text-slate-200">
+                                      <span 
+                                        className="text-xs font-mono font-bold cursor-grab active:cursor-grabbing hover:text-blue-400 p-0.5" 
+                                        title="在列上按住可自由拖曳調整順序"
+                                      >
+                                        ⠿
+                                      </span>
+                                      {userRole === 'admin' && (
+                                        <div className="flex flex-col text-[8px] leading-tight ml-0.5">
+                                          <button 
+                                            onClick={() => moveMachineByOffset(machine.id, -1)} 
+                                            className="hover:text-blue-400 font-bold px-0.5" 
+                                            title="向上移動整列"
+                                          >
+                                            ▲
+                                          </button>
+                                          <button 
+                                            onClick={() => moveMachineByOffset(machine.id, 1)} 
+                                            className="hover:text-blue-400 font-bold px-0.5" 
+                                            title="向下移動整列"
+                                          >
+                                            ▼
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+
                                   <td className="p-1.5">
                                     {machine.type ? (
                                       <span className="bg-slate-800 text-slate-300 border border-slate-700 px-1 py-0.5 rounded text-[10px] font-medium whitespace-nowrap">
@@ -2038,6 +2136,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
+          {}
           {/* Unsaved Changes Guard Prompt Modal */}
           {showUnsavedPrompt && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
