@@ -52,7 +52,7 @@
     const DEFAULT_SUPABASE_URL = "https://uczyrbaqojhcetqaqzcw.supabase.co";
     const DEFAULT_SUPABASE_KEY = "sb_publishable_rj4tdbDeW0i95WiDEqlcOQ_5ysQR8If";
 
-    // 假別與休假標籤定義 (包含 忌、休、未、特、病、事、公、喪、OFF)
+    // 假別標籤定義 (包含 忌、休、未、特、病、事、公、喪、OFF)
     const LEAVE_TAGS = ['特', '病', '事', '公', '喪', '未', '忌', '休', 'OFF', 'off'];
 
     const { useState, useEffect, useMemo, useRef } = React;
@@ -235,13 +235,13 @@
       { label: "暗夜黑 (停用/停產)", color: "bg-zinc-800 text-zinc-200 border-zinc-600", badge: "bg-zinc-500" }
     ];
 
+    // 更新機台順序：
+    // 通用 (領班/QC/搬運/折彎) -> Kaido (W32~W39, W45) -> 先導 (W42~W44) -> 羅得B (W31, W40) -> 覆捲機 (RW05~RW19)
     const DEFAULT_MACHINES = [
       { id: "m-01", type: "", name: "領班", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-02", type: "", name: "QC", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-03", type: "", name: "極片搬運", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-04", type: "", name: "折彎機", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
-      { id: "m-05", type: "羅得B", name: "W31", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
-      { id: "m-14", type: "羅得B", name: "W40", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-06", type: "Kaido", name: "W32", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-07", type: "Kaido", name: "W33", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-08", type: "Kaido", name: "W34", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
@@ -254,6 +254,8 @@
       { id: "m-15", type: "先導", name: "W42", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-16", type: "先導", name: "W43", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-17", type: "先導", name: "W44", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-05", type: "羅得B", name: "W31", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-14", type: "羅得B", name: "W40", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-19", type: "覆捲機", name: "RW05", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-20", type: "覆捲機", name: "RW07", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-21", type: "覆捲機", name: "RW08", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
@@ -311,7 +313,7 @@
 
       // Core State Variables
       const [machines, setMachines] = useState(() => {
-        const saved = localStorage.getItem("mfg_board_machines_v8");
+        const saved = localStorage.getItem("mfg_board_machines_v9");
         return saved ? JSON.parse(saved) : DEFAULT_MACHINES;
       });
 
@@ -401,6 +403,7 @@
       const [pendingAction, setPendingAction] = useState(null);
       const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
 
+      // 只有管理員權限時，才計算是否有未儲存變更 (isDirty)
       const isDirty = useMemo(() => {
         if (userRole !== 'admin') return false;
         if (!savedSnapshot) return false;
@@ -425,7 +428,7 @@
       }, []);
 
       useEffect(() => {
-        localStorage.setItem("mfg_board_machines_v8", JSON.stringify(machines));
+        localStorage.setItem("mfg_board_machines_v9", JSON.stringify(machines));
         localStorage.setItem("mfg_board_machine_types_v3", JSON.stringify(machineTypes));
         localStorage.setItem("mfg_board_mstatus_opt_v4", JSON.stringify(mStatusOptions));
         localStorage.setItem("mfg_board_matstatus_opt_v4", JSON.stringify(matStatusOptions));
@@ -480,7 +483,8 @@
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
-      // 全系統統一出勤判定函式 (當班請假/忌休不勾選；支援人員僅 G 加班預設勾選)
+      // 全系統統一出勤判定函式：
+      // 當班請假（特/病/事/公/喪/未/忌/休）則預設不勾選；支援人員排班標示為 G 時自動預設勾選
       const isPersonPresent = (personName, isDuty) => {
         if (attendanceMap[personName] !== undefined) {
           return !!attendanceMap[personName];
@@ -650,7 +654,7 @@
         loadShifts();
       }, [selectedDate, supabaseConnected]);
 
-      // 當切換日期/班別或讀取完當天 Supabase 排班資料時，自動依排班表精確初始化點名
+      // 當切換日期/班別或讀取完當天 Supabase 排班資料時，自動依排班表精確初始化點名（當班請假不勾選；支援 G 加班自動勾選）
       useEffect(() => {
         const shiftKey = `${selectedDate}_${selectedShiftTime}`;
         const existingSnap = schedulesMap[shiftKey];
@@ -1038,6 +1042,7 @@
         return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint, waitingMaterial };
       }, [categorizedPersonnel.duty, dutyCheckedCount, supportCheckedCount, machines]);
 
+      // 動態統計「有人操機才算」且排除「通用」類型的機台型號數量
       const machineModelCountsText = useMemo(() => {
         const counts = {};
         machines.forEach(m => {
@@ -1577,7 +1582,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   <h2 className="text-xs font-bold text-slate-200 flex items-center gap-2">
                     📋 現場出勤點名表
                     <span className="text-[11px] font-normal text-slate-400">
-                      ({selectedDate} {selectedShiftTime}班 - 當班請假則不勾選；支援人員有加班預設勾選)
+                      ({selectedDate} {selectedShiftTime}班 - 當班請假則不勾選；支援人員排 G 加班預設勾選)
                     </span>
                   </h2>
                 </div>
@@ -2101,6 +2106,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   const matchingGroups = targetM ? getMatchingSkillGroups(targetM.name) : [];
                   const qualifiedMembersSet = new Set(matchingGroups.flatMap(g => g.members));
 
+                  const dutyPresentCount = currentDutyPool.filter(p => isPersonPresent(p, true)).length;
                   const supportPresentCount = currentSupportPool.filter(p => isPersonPresent(p, false)).length;
 
                   return (
@@ -2141,7 +2147,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 activeTabPool === "duty" ? "bg-purple-600 text-white font-bold" : "bg-slate-800 text-slate-400"
                               }`}
                             >
-                              {categorizedPersonnel.dutySquad}當班
+                              {categorizedPersonnel.dutySquad}當班 ({dutyPresentCount}人)
                             </button>
                             <button
                               onClick={() => setActiveTabPool("support")}
@@ -2149,7 +2155,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 activeTabPool === "support" ? "bg-blue-600 text-white font-bold" : "bg-slate-800 text-slate-400"
                               }`}
                             >
-                              {categorizedPersonnel.supportSquad}支援 {supportPresentCount > 0 && `(${supportPresentCount}人到工)`}
+                              {categorizedPersonnel.supportSquad}支援 ({supportPresentCount}人)
                             </button>
                           </div>
 
