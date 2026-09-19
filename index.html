@@ -610,6 +610,10 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 if (cloudState.schedulesMap) setSchedulesMap(cloudState.schedulesMap);
                 if (cloudState.maintenanceLogs) setMaintenanceLogs(cloudState.maintenanceLogs);
                 if (cloudState.maintIssueTags) setMaintIssueTags(cloudState.maintIssueTags);
+                if (cloudState.adminPassword) {
+                  setAdminPassword(cloudState.adminPassword);
+                  localStorage.setItem("mfg_board_admin_pw_v3", cloudState.adminPassword);
+                }
 
                 const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
                 const shiftData = cloudState.schedulesMap && cloudState.schedulesMap[shiftKey];
@@ -643,6 +647,10 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                     if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
                     if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
                     if (remote.maintenanceLogs) setMaintenanceLogs(remote.maintenanceLogs);
+                    if (remote.adminPassword && remote.adminPassword !== adminPassword) {
+                      setAdminPassword(remote.adminPassword);
+                      localStorage.setItem("mfg_board_admin_pw_v3", remote.adminPassword);
+                    }
 
                     if (!isDirtyRef.current) {
                       const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
@@ -680,6 +688,10 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
                 if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
                 if (remote.maintenanceLogs) setMaintenanceLogs(remote.maintenanceLogs);
+                if (remote.adminPassword && remote.adminPassword !== adminPassword) {
+                  setAdminPassword(remote.adminPassword);
+                  localStorage.setItem("mfg_board_admin_pw_v3", remote.adminPassword);
+                }
 
                 if (!isDirtyRef.current) {
                   const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
@@ -795,6 +807,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             schedulesMap: newSchedulesMap,
             maintenanceLogs,
             maintIssueTags,
+            adminPassword,
             ...updatedFields,
             schedulesMap: newSchedulesMap
           };
@@ -903,6 +916,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         }
         setAdminPassword(pwForm.newPw);
         localStorage.setItem("mfg_board_admin_pw_v3", pwForm.newPw);
+        pushToSupabase({ adminPassword: pwForm.newPw });
         setShowChangePwModal(false);
         setPwForm({ oldPw: "", newPw: "", confirmPw: "" });
         setPwError("");
