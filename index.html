@@ -55,6 +55,10 @@
     // 假別標籤定義 (包含 忌、休、未、特、病、事、公、喪、OFF)
     const LEAVE_TAGS = ['特', '病', '事', '公', '喪', '未', '忌', '休', 'OFF', 'off'];
 
+    const DEFAULT_MAINT_ISSUE_TAGS = [
+      "極片卡料", "刀具磨損", "感應器異常", "氣壓不足", "換模換線保養", "電路故障", "馬達過熱", "定期保養"
+    ];
+
     const { useState, useEffect, useMemo, useRef } = React;
 
     const IconPlus = () => (
@@ -235,8 +239,7 @@
       { label: "暗夜黑 (停用/停產)", color: "bg-zinc-800 text-zinc-200 border-zinc-600", badge: "bg-zinc-500" }
     ];
 
-    // 機台順序：
-    // 通用 (領班/QC/搬運/折彎) -> Kaido (W32~W39, W45) -> 先導 (W42~W44) -> 羅得B (W31, W40) -> 覆捲機 (RW05~RW19)
+    // 新排列順序：通用 -> Kaido -> 先導 -> 羅得B -> 覆捲機
     const DEFAULT_MACHINES = [
       { id: "m-01", type: "", name: "領班", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-02", type: "", name: "QC", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
@@ -335,11 +338,19 @@
         return saved ? JSON.parse(saved) : DEFAULT_MATERIAL_STATUS_OPTIONS;
       });
 
-      // 當班維修紀錄狀態 ( Maintenance Logs )
+      // 當班維修紀錄與預設原因選項目
       const [maintenanceLogs, setMaintenanceLogs] = useState(() => {
         const saved = localStorage.getItem("mfg_board_maint_logs_v1");
         return saved ? JSON.parse(saved) : [];
       });
+
+      const [maintIssueTags, setMaintIssueTags] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_maint_tags_v1");
+        return saved ? JSON.parse(saved) : DEFAULT_MAINT_ISSUE_TAGS;
+      });
+
+      const [isManagingMaintTags, setIsManagingMaintTags] = useState(false);
+      const [newMaintTagInput, setNewMaintTagInput] = useState("");
 
       const [maintModal, setMaintModal] = useState({ open: false, machineId: null, machineName: null });
       const [newMaintForm, setNewMaintForm] = useState({ issue: "", startTime: "", endTime: "", note: "" });
@@ -388,7 +399,7 @@
       // Filters & Search
       const [filterType, setFilterType] = useState("ALL");
       const [filterStatus, setFilterStatus] = useState("ALL");
-      const [filterMatStatus, setFilterMatStatus] = useState("ALL"); // 新增依「料況」篩選
+      const [filterMatStatus, setFilterMatStatus] = useState("ALL");
       const [searchTerm, setSearchTerm] = useState("");
       const [groupSearchTerm, setGroupSearchTerm] = useState("");
       const [activeTabPool, setActiveTabPool] = useState("duty");
@@ -418,7 +429,7 @@
       const [pendingAction, setPendingAction] = useState(null);
       const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
 
-      // 管理員未儲存狀態計算
+      // 管理員未儲存狀態計算 (檢視者免儲存提示)
       const isDirty = useMemo(() => {
         if (userRole !== 'admin') return false;
         if (!savedSnapshot) return false;
@@ -451,7 +462,8 @@
         localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
         localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
         localStorage.setItem("mfg_board_maint_logs_v1", JSON.stringify(maintenanceLogs));
-      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap, schedulesMap, maintenanceLogs]);
+        localStorage.setItem("mfg_board_maint_tags_v1", JSON.stringify(maintIssueTags));
+      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap, schedulesMap, maintenanceLogs, maintIssueTags]);
 
       useEffect(() => {
         if (!selectedDate) return;
@@ -574,6 +586,7 @@
                 if (cloudState.matStatusOptions) setMatStatusOptions(cloudState.matStatusOptions);
                 if (cloudState.schedulesMap) setSchedulesMap(cloudState.schedulesMap);
                 if (cloudState.maintenanceLogs) setMaintenanceLogs(cloudState.maintenanceLogs);
+                if (cloudState.maintIssueTags) setMaintIssueTags(cloudState.maintIssueTags);
 
                 const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
                 const shiftData = cloudState.schedulesMap && cloudState.schedulesMap[shiftKey];
@@ -599,6 +612,7 @@
                   if (payload.new && payload.new.data) {
                     const remote = payload.new.data;
                     if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
+                    if (remote.maintIssueTags) setMaintIssueTags(remote.maintIssueTags);
                     
                     if (!isDirtyRef.current) {
                       const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
@@ -627,6 +641,7 @@
               if (data && data.data) {
                 const remote = data.data;
                 if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
+                if (remote.maintIssueTags) setMaintIssueTags(remote.maintIssueTags);
                 
                 if (!isDirtyRef.current) {
                   const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
@@ -721,6 +736,8 @@
             mStatusOptions,
             matStatusOptions,
             schedulesMap: newSchedulesMap,
+            maintenanceLogs,
+            maintIssueTags,
             ...updatedFields
           };
 
@@ -887,8 +904,18 @@
           showNotice(`已新增 [${maintModal.machineName}] 維修異常紀錄`, "success");
         }
 
+        // 自動變更機況：如果設備未完修 (還沒有結束時間 endTime)，機況自動選擇 "設備異常"
+        let updatedMachines = machines;
+        if (!newMaintForm.endTime || !newMaintForm.endTime.trim()) {
+          updatedMachines = machines.map(m =>
+            m.name === maintModal.machineName ? { ...m, mStatus: "設備異常" } : m
+          );
+          setMachines(updatedMachines);
+          showNotice(`機台 [${maintModal.machineName}] 未完修，機況已自動切換為「設備異常」`, "info");
+        }
+
         setMaintenanceLogs(updatedLogs);
-        pushToSupabase({ maintenanceLogs: updatedLogs });
+        pushToSupabase({ maintenanceLogs: updatedLogs, machines: updatedMachines });
         setNewMaintForm({ issue: "", startTime: new Date().toTimeString().slice(0, 5), endTime: "", note: "" });
         setEditingMaintId(null);
       };
@@ -909,6 +936,27 @@
             showNotice("已刪除維修紀錄", "info");
           }
         });
+      };
+
+      const handleAddMaintTag = () => {
+        const tag = newMaintTagInput.trim();
+        if (!tag) return;
+        if (maintIssueTags.includes(tag)) {
+          showNotice("該異常原因標籤已存在！", "error");
+          return;
+        }
+        const updated = [...maintIssueTags, tag];
+        setMaintIssueTags(updated);
+        setNewMaintTagInput("");
+        pushToSupabase({ maintIssueTags: updated });
+        showNotice(`已新增預設異常原因 [${tag}]`, "success");
+      };
+
+      const handleDeleteMaintTag = (tagToDelete) => {
+        const updated = maintIssueTags.filter(t => t !== tagToDelete);
+        setMaintIssueTags(updated);
+        pushToSupabase({ maintIssueTags: updated });
+        showNotice(`已刪除預設原因 [${tagToDelete}]`, "info");
       };
 
       const getMatchingSkillGroups = (machineName) => {
@@ -1518,7 +1566,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           <main className="max-w-7xl mx-auto w-full p-4 flex-1 flex flex-col gap-4">
             
             {/* Date Selector & Shift Selector Bar */}
@@ -1776,7 +1823,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {/* Filter & Search Toolbar (新增依料況篩選下拉選單) */}
+            {/* Filter & Search Toolbar */}
             <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-lg flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 shadow">
               <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 lg:pb-0">
                 <span className="text-xs font-medium text-slate-400 mr-1 whitespace-nowrap">類型篩選:</span>
@@ -1802,7 +1849,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 flex-1 lg:max-w-xl justify-end">
-                {/* 1. 全部機況下拉選單 */}
                 <select
                   value={filterStatus}
                   onChange={e => setFilterStatus(e.target.value)}
@@ -1814,7 +1860,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   ))}
                 </select>
 
-                {/* 2. 新增依【料況】篩選下拉選單 */}
                 <select
                   value={filterMatStatus}
                   onChange={e => setFilterMatStatus(e.target.value)}
@@ -1827,7 +1872,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   ))}
                 </select>
 
-                {/* 3. 搜尋欄位 */}
                 <div className="relative flex-1 min-w-[140px]">
                   <input
                     type="text"
@@ -1851,7 +1895,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {/* Main Interactive Machine Grid (含整列自由拖曳與上下排序功能) */}
+            {/* Main Interactive Machine Grid */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                 <div className="flex items-center space-x-3 flex-wrap gap-y-1">
@@ -1957,7 +2001,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                   }}
                                   className={`hover:bg-slate-800/40 transition ${isBeingDragged ? 'opacity-30 bg-blue-900/50' : ''}`}
                                 >
-                                  {/* 整列自由排序 Drag & Drop 手把及上下按鈕 */}
+                                  {/* Drag & Drop Handle and Up/Down Buttons */}
                                   <td className="p-1 text-center select-none bg-slate-950/40 border-r border-slate-800/50">
                                     <div className="flex items-center justify-center space-x-0.5 text-slate-500 hover:text-slate-200">
                                       <span 
@@ -2223,6 +2267,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     onClick={() => {
                       setMaintModal({ open: false, machineId: null, machineName: null });
                       setEditingMaintId(null);
+                      setIsManagingMaintTags(false);
                     }}
                     className="text-slate-400 hover:text-white font-bold p-1"
                   >
@@ -2274,7 +2319,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                       isOngoing ? "bg-rose-600 text-white animate-pulse" : "bg-emerald-950 text-emerald-300 border border-emerald-800"
                                     }`}>
-                                      {isOngoing ? "⚠️ 維修處理中" : "✓ 已修復完成"}
+                                      {isOngoing ? "⚠️ 維修處理中 (機況設備異常)" : "✓ 已修復完成"}
                                     </span>
                                     <span className="font-bold text-slate-100 text-sm">{log.issue}</span>
                                   </div>
@@ -2337,25 +2382,69 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                         )}
                       </div>
 
-                      {/* Quick Issue Category Tags */}
+                      {/* Quick Issue Category Tags (可編輯選項) */}
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">1. 異常原因 / 維修項目</label>
-                        <div className="flex flex-wrap gap-1 mb-1.5">
-                          {["極片卡料", "刀具磨損", "感應器異常", "氣壓不足", "換模換線保養", "電路故障", "馬達過熱", "定期保養"].map(tag => (
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[11px] font-semibold text-slate-400">1. 異常原因 / 維修項目</label>
+                          <button
+                            type="button"
+                            onClick={() => setIsManagingMaintTags(!isManagingMaintTags)}
+                            className="text-[10px] text-blue-400 hover:text-blue-300 underline font-medium"
+                          >
+                            {isManagingMaintTags ? "✓ 完成預設編輯" : "⚙️ 編輯預設原因"}
+                          </button>
+                        </div>
+
+                        {/* 管理模式：新增選項輸入框 */}
+                        {isManagingMaintTags && (
+                          <div className="flex items-center space-x-1.5 mb-2 bg-slate-900 p-2 rounded border border-slate-800">
+                            <input
+                              type="text"
+                              placeholder="新增預設異常原因..."
+                              value={newMaintTagInput}
+                              onChange={e => setNewMaintTagInput(e.target.value)}
+                              className="flex-1 bg-slate-950 border border-slate-700 text-slate-200 text-xs px-2 py-1 rounded focus:outline-none placeholder-slate-500"
+                            />
                             <button
-                              key={tag}
                               type="button"
-                              onClick={() => setNewMaintForm(prev => ({ ...prev, issue: tag }))}
-                              className={`text-[10px] px-2 py-0.5 rounded border transition ${
-                                newMaintForm.issue === tag
-                                  ? "bg-blue-600 text-white border-blue-500 font-bold"
-                                  : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-slate-200"
-                              }`}
+                              onClick={handleAddMaintTag}
+                              className="bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold px-2.5 py-1 rounded shadow"
                             >
-                              {tag}
+                              + 新增項目
                             </button>
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-1 mb-1.5">
+                          {maintIssueTags.map(tag => (
+                            <div key={tag} className="inline-flex items-center">
+                              <button
+                                type="button"
+                                onClick={() => setNewMaintForm(prev => ({ ...prev, issue: tag }))}
+                                className={`text-[10px] px-2 py-0.5 rounded transition ${
+                                  isManagingMaintTags ? "rounded-r-none border-r-0" : ""
+                                } ${
+                                  newMaintForm.issue === tag
+                                    ? "bg-blue-600 text-white border border-blue-500 font-bold"
+                                    : "bg-slate-900 text-slate-400 border border-slate-800 hover:bg-slate-800 hover:text-slate-200"
+                                }`}
+                              >
+                                {tag}
+                              </button>
+                              {isManagingMaintTags && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteMaintTag(tag)}
+                                  className="text-[10px] px-1.5 py-0.5 bg-rose-950 text-rose-300 border border-slate-800 border-l-0 rounded-r hover:bg-rose-800 hover:text-white"
+                                  title="刪除此項預設原因"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
                           ))}
                         </div>
+
                         <input
                           type="text"
                           required
@@ -2389,7 +2478,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                         <div>
                           <div className="flex items-center justify-between mb-1">
-                            <label className="text-[11px] font-semibold text-slate-400">3. 結束時間 (若維修中可留空)</label>
+                            <label className="text-[11px] font-semibold text-slate-400">
+                              3. 結束時間 <span className="text-amber-400 font-normal">(未填自動改機況為設備異常)</span>
+                            </label>
                             <button
                               type="button"
                               onClick={() => setNewMaintForm(prev => ({ ...prev, endTime: new Date().toTimeString().slice(0, 5) }))}
@@ -2438,6 +2529,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     onClick={() => {
                       setMaintModal({ open: false, machineId: null, machineName: null });
                       setEditingMaintId(null);
+                      setIsManagingMaintTags(false);
                     }}
                     className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-1.5 rounded-lg border border-slate-700"
                   >
@@ -2588,7 +2680,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                             const isDutyTab = activeTabPool === "duty";
                             const activePool = isDutyTab ? currentDutyPool : currentSupportPool;
                             
-                            // 精確統一篩選目前已出勤的人員
                             const basePool = activePool.filter(person => isPersonPresent(person, isDutyTab));
 
                             const hasGroupRestriction = matchingGroups.length > 0 && !allowCrossGroup;
@@ -3366,7 +3457,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {}
           <footer className="bg-slate-950 border-t border-slate-900 py-3 text-center text-xs text-slate-500">
             製造管理看板 © 2026 - Supabase Connected ({realtimeMode})
           </footer>
