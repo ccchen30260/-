@@ -52,6 +52,9 @@
     const DEFAULT_SUPABASE_URL = "https://uczyrbaqojhcetqaqzcw.supabase.co";
     const DEFAULT_SUPABASE_KEY = "sb_publishable_rj4tdbDeW0i95WiDEqlcOQ_5ysQR8If";
 
+    // 假別與休假標籤定義 (包含 忌、休、未、特、病、事、公、喪、OFF)
+    const LEAVE_TAGS = ['特', '病', '事', '公', '喪', '未', '忌', '休', 'OFF', 'off'];
+
     const { useState, useEffect, useMemo, useRef } = React;
 
     const IconPlus = () => (
@@ -477,7 +480,7 @@
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
-      // 全系統統一出勤判定函式 (適用於點名表、數據統計與快速指派視窗)
+      // 全系統統一出勤判定函式 (當班請假/忌休不勾選；支援人員僅 G 加班預設勾選)
       const isPersonPresent = (personName, isDuty) => {
         if (attendanceMap[personName] !== undefined) {
           return !!attendanceMap[personName];
@@ -488,7 +491,7 @@
         if (!itemObj) return false;
         const sVal = itemObj.schedShift;
         if (isDuty) {
-          return !['特', '病', '事', '公', '喪', '未'].includes(sVal);
+          return sVal ? !LEAVE_TAGS.includes(sVal) : true;
         } else {
           return sVal === 'G';
         }
@@ -558,10 +561,6 @@
                   setMachines(shiftData.machines || DEFAULT_MACHINES);
                   setAttendanceMap(shiftData.attendanceMap || {});
                   setSavedSnapshot(JSON.parse(JSON.stringify(shiftData)));
-                } else if (cloudState.machines) {
-                  setMachines(cloudState.machines);
-                  setAttendanceMap(cloudState.attendanceMap || {});
-                  setSavedSnapshot(JSON.parse(JSON.stringify({ machines: cloudState.machines, attendanceMap: cloudState.attendanceMap || {} })));
                 }
               }
               setSupabaseConnected(true);
@@ -651,22 +650,32 @@
         loadShifts();
       }, [selectedDate, supabaseConnected]);
 
+      // 當切換日期/班別或讀取完當天 Supabase 排班資料時，自動依排班表精確初始化點名
       useEffect(() => {
         const shiftKey = `${selectedDate}_${selectedShiftTime}`;
-        if (schedulesMap[shiftKey]) return;
+        const existingSnap = schedulesMap[shiftKey];
 
-        const nextAttendance = {};
-        categorizedPersonnel.duty.forEach(item => {
-          nextAttendance[item.name] = isPersonPresent(item.name, true);
-        });
+        if (existingSnap && existingSnap.attendanceMap && Object.keys(existingSnap.attendanceMap).length > 0) {
+          setAttendanceMap(existingSnap.attendanceMap);
+          if (existingSnap.machines) setMachines(existingSnap.machines);
+          setSavedSnapshot(JSON.parse(JSON.stringify(existingSnap)));
+        } else {
+          const freshAttendance = {};
+          categorizedPersonnel.duty.forEach(item => {
+            const sVal = item.schedShift;
+            const isLeave = sVal ? LEAVE_TAGS.includes(sVal) : false;
+            freshAttendance[item.name] = !isLeave;
+          });
 
-        categorizedPersonnel.support.forEach(item => {
-          nextAttendance[item.name] = isPersonPresent(item.name, false);
-        });
+          categorizedPersonnel.support.forEach(item => {
+            const sVal = item.schedShift;
+            freshAttendance[item.name] = (sVal === 'G');
+          });
 
-        setAttendanceMap(nextAttendance);
-        setSavedSnapshot({ machines, attendanceMap: nextAttendance });
-      }, [selectedDate, selectedShiftTime, categorizedPersonnel, schedulesMap]);
+          setAttendanceMap(freshAttendance);
+          setSavedSnapshot({ machines, attendanceMap: freshAttendance });
+        }
+      }, [selectedDate, selectedShiftTime, scheduledShifts, categorizedPersonnel]);
 
       const pushToSupabase = async (updatedFields) => {
         if (!supabaseRef.current) return;
@@ -717,19 +726,6 @@
       };
 
       const performShiftChange = (targetDate, targetShiftTime) => {
-        const targetShiftKey = `${targetDate}_${targetShiftTime}`;
-        const targetData = schedulesMap[targetShiftKey];
-
-        if (targetData) {
-          setMachines(targetData.machines || DEFAULT_MACHINES);
-          setAttendanceMap(targetData.attendanceMap || {});
-          setSavedSnapshot(JSON.parse(JSON.stringify(targetData)));
-        } else {
-          setMachines(DEFAULT_MACHINES.map(m => ({ ...m, operator: "", backup: "", mStatus: "正常運轉" })));
-          setAttendanceMap({});
-          setSavedSnapshot(JSON.parse(JSON.stringify({ machines: DEFAULT_MACHINES, attendanceMap: {} })));
-        }
-
         setSelectedDate(targetDate);
         setSelectedShiftTime(targetShiftTime);
         showNotice(`已切換至 [${targetDate} ${targetShiftTime}班]`, "info");
@@ -1613,7 +1609,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     {categorizedPersonnel.duty.map(item => {
                       const name = item.name;
                       const schedShift = item.schedShift;
-                      const isLeave = ['特', '病', '事', '公', '喪', '未'].includes(schedShift);
+                      const isLeave = LEAVE_TAGS.includes(schedShift);
                       const isChecked = isPersonPresent(name, true);
                       return (
                         <label
@@ -1669,7 +1665,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       const name = item.name;
                       const schedShift = item.schedShift;
                       const isOT = (schedShift === 'G');
-                      const isLeave = ['特', '病', '事', '公', '喪', '未'].includes(schedShift);
+                      const isLeave = LEAVE_TAGS.includes(schedShift);
                       const isChecked = isPersonPresent(name, false);
                       return (
                         <label
@@ -2175,7 +2171,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                             const isDutyTab = activeTabPool === "duty";
                             const activePool = isDutyTab ? currentDutyPool : currentSupportPool;
                             
-                            // 精確統一篩選目前已出勤（包括點名表勾選與 G 加班）的人員
+                            // 精確統一篩選目前已出勤的人員
                             const basePool = activePool.filter(person => isPersonPresent(person, isDutyTab));
 
                             const hasGroupRestriction = matchingGroups.length > 0 && !allowCrossGroup;
