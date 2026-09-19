@@ -335,6 +335,16 @@
         return saved ? JSON.parse(saved) : DEFAULT_MATERIAL_STATUS_OPTIONS;
       });
 
+      // 當班維修紀錄狀態 ( Maintenance Logs )
+      const [maintenanceLogs, setMaintenanceLogs] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_maint_logs_v1");
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [maintModal, setMaintModal] = useState({ open: false, machineId: null, machineName: null });
+      const [newMaintForm, setNewMaintForm] = useState({ issue: "", startTime: "", endTime: "", note: "" });
+      const [editingMaintId, setEditingMaintId] = useState(null);
+
       const [squadRosters, setSquadRosters] = useState({
         S1: INITIAL_OPERATORS_POOL_S1,
         S2: INITIAL_OPERATORS_POOL_S2,
@@ -440,7 +450,8 @@
         localStorage.setItem("mfg_board_skill_groups_v4", JSON.stringify(skillGroups));
         localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
         localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
-      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap, schedulesMap]);
+        localStorage.setItem("mfg_board_maint_logs_v1", JSON.stringify(maintenanceLogs));
+      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap, schedulesMap, maintenanceLogs]);
 
       useEffect(() => {
         if (!selectedDate) return;
@@ -562,6 +573,7 @@
                 if (cloudState.mStatusOptions) setMStatusOptions(cloudState.mStatusOptions);
                 if (cloudState.matStatusOptions) setMatStatusOptions(cloudState.matStatusOptions);
                 if (cloudState.schedulesMap) setSchedulesMap(cloudState.schedulesMap);
+                if (cloudState.maintenanceLogs) setMaintenanceLogs(cloudState.maintenanceLogs);
 
                 const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
                 const shiftData = cloudState.schedulesMap && cloudState.schedulesMap[shiftKey];
@@ -830,58 +842,71 @@
         showNotice(`已調整機台 [${moved.name}] 之順序`, "info");
       };
 
-      const moveMachineByOffset = (machineId, offset) => {
-        const index = machines.findIndex(m => m.id === machineId);
-        if (index < 0) return;
-        const targetIndex = index + offset;
-        if (targetIndex < 0 || targetIndex >= machines.length) return;
-
+      const moveMachineByOffset = (id, offset) => {
+        const idx = machines.findIndex(m => m.id === id);
+        if (idx < 0) return;
+        const targetIdx = idx + offset;
+        if (targetIdx < 0 || targetIdx >= machines.length) return;
         const updated = [...machines];
-        const [moved] = updated.splice(index, 1);
-        updated.splice(targetIndex, 0, moved);
-
+        const [moved] = updated.splice(idx, 1);
+        updated.splice(targetIdx, 0, moved);
         setMachines(updated);
       };
 
-      const handleAddMachineType = () => {
-        const name = newTypeName.trim();
-        if (!name) return;
-        if (machineTypes.includes(name)) {
-          showNotice("此機台類型已存在！", "error");
+      const currentShiftKey = `${selectedDate}_${selectedShiftTime}`;
+
+      const handleAddOrUpdateMaintLog = (e) => {
+        e.preventDefault();
+        if (!newMaintForm.issue.trim()) {
+          showNotice("請填寫異常原因！", "error");
           return;
         }
-        const updated = [...machineTypes, name];
-        setMachineTypes(updated);
-        setNewTypeName("");
-        showNotice(`已新增機台類型 [${name}]`, "success");
+
+        let updatedLogs = [];
+        if (editingMaintId) {
+          updatedLogs = maintenanceLogs.map(log => log.id === editingMaintId ? {
+            ...log,
+            issue: newMaintForm.issue.trim(),
+            startTime: newMaintForm.startTime,
+            endTime: newMaintForm.endTime,
+            note: newMaintForm.note.trim()
+          } : log);
+          showNotice("已更新維修保養紀錄！", "success");
+        } else {
+          const newLog = {
+            id: "maint-" + Date.now(),
+            machineName: maintModal.machineName,
+            shiftKey: currentShiftKey,
+            issue: newMaintForm.issue.trim(),
+            startTime: newMaintForm.startTime || new Date().toTimeString().slice(0, 5),
+            endTime: newMaintForm.endTime,
+            note: newMaintForm.note.trim(),
+            createdAt: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
+          };
+          updatedLogs = [newLog, ...maintenanceLogs];
+          showNotice(`已新增 [${maintModal.machineName}] 維修異常紀錄`, "success");
+        }
+
+        setMaintenanceLogs(updatedLogs);
+        pushToSupabase({ maintenanceLogs: updatedLogs });
+        setNewMaintForm({ issue: "", startTime: new Date().toTimeString().slice(0, 5), endTime: "", note: "" });
+        setEditingMaintId(null);
       };
 
-      const handleSaveEditMachineType = (index) => {
-        const val = editingTypeValue.trim();
-        if (!val) return;
-        const oldType = machineTypes[index];
-        const updatedTypes = machineTypes.map((t, i) => i === index ? val : t);
-        const updatedMachines = machines.map(m => m.type === oldType ? { ...m, type: val } : m);
-        setMachineTypes(updatedTypes);
-        setMachines(updatedMachines);
-        setEditingTypeIndex(null);
-        setEditingTypeValue("");
-        showNotice("已修改類型名稱！", "success");
-      };
-
-      const handleDeleteMachineType = (typeName) => {
+      const handleDeleteMaintLog = (logId) => {
         setConfirmDialog({
           open: true,
-          title: "刪除機台類型確認",
-          message: `確定要刪除「${typeName}」機台類型嗎？`,
+          title: "刪除維修紀錄",
+          message: "確定要刪除此筆維修紀錄嗎？",
           onConfirm: () => {
-            const updatedTypes = machineTypes.filter(t => t !== typeName);
-            setMachineTypes(updatedTypes);
-            if (newMachine.type === typeName) {
-              setNewMachine(prev => ({ ...prev, type: updatedTypes[0] || "" }));
+            const updated = maintenanceLogs.filter(l => l.id !== logId);
+            setMaintenanceLogs(updated);
+            pushToSupabase({ maintenanceLogs: updated });
+            if (editingMaintId === logId) {
+              setEditingMaintId(null);
+              setNewMaintForm({ issue: "", startTime: new Date().toTimeString().slice(0, 5), endTime: "", note: "" });
             }
-            if (filterType === typeName) setFilterType("ALL");
-            showNotice(`已刪除機台類型 [${typeName}]`, "info");
+            showNotice("已刪除維修紀錄", "info");
           }
         });
       };
@@ -1066,7 +1091,13 @@
         const down = machines.filter(m => m.mStatus === "設備異常" && isCountedMachine(m)).length;
         const maint = machines.filter(m => m.mStatus === "停機保養" && isCountedMachine(m)).length;
         
-        const isWaitingMaterial = m => m.matStatus && (m.matStatus.startsWith("待") || m.matStatus === "待料中");
+        const isWaitingMaterial = m => m.matStatus && (
+          m.matStatus === "待料中" || 
+          m.matStatus === "待正極片" || 
+          m.matStatus === "待負極片" || 
+          m.matStatus === "待TRAY停機" || 
+          m.matStatus.startsWith("待")
+        );
         const waitingMaterial = machines.filter(m => isWaitingMaterial(m) && isCountedMachine(m)).length;
 
         return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint, waitingMaterial };
@@ -1487,6 +1518,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
+          {}
           <main className="max-w-7xl mx-auto w-full p-4 flex-1 flex flex-col gap-4">
             
             {/* Date Selector & Shift Selector Bar */}
@@ -1850,7 +1882,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 </div>
               </div>
 
-              {}
               {(() => {
                 let split = Math.ceil(filteredMachines.length / 2);
                 while (split < filteredMachines.length) {
@@ -1967,9 +1998,43 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                   </td>
 
                                   <td className="p-1.5">
-                                    <span className="font-bold text-slate-100 text-xs">
-                                      {machine.name}
-                                    </span>
+                                    {/* 機台名稱點擊觸發維修紀錄彈窗 */}
+                                    {(() => {
+                                      const currentMachineLogs = maintenanceLogs.filter(
+                                        l => l.machineName === machine.name && l.shiftKey === currentShiftKey
+                                      );
+                                      const hasActiveOngoing = currentMachineLogs.some(l => !l.endTime);
+
+                                      return (
+                                        <button
+                                          onClick={() => {
+                                            setMaintModal({ open: true, machineId: machine.id, machineName: machine.name });
+                                            setNewMaintForm({ 
+                                              issue: "", 
+                                              startTime: new Date().toTimeString().slice(0, 5), 
+                                              endTime: "", 
+                                              note: "" 
+                                            });
+                                            setEditingMaintId(null);
+                                          }}
+                                          className="font-bold text-slate-100 hover:text-blue-400 text-xs flex items-center gap-1 group text-left transition"
+                                          title="點擊開啟當班維修保養/異常紀錄表"
+                                        >
+                                          <span className="underline decoration-slate-700 group-hover:decoration-blue-400 underline-offset-2">
+                                            {machine.name}
+                                          </span>
+                                          {currentMachineLogs.length > 0 && (
+                                            <span className={`text-[10px] px-1 rounded flex items-center gap-0.5 ${
+                                              hasActiveOngoing 
+                                                ? "bg-rose-950 text-rose-300 border border-rose-700 animate-pulse font-bold" 
+                                                : "bg-slate-800 text-slate-300 border border-slate-700"
+                                            }`} title={`共 ${currentMachineLogs.length} 筆紀錄${hasActiveOngoing ? ' (處理中)' : ''}`}>
+                                              🔧{currentMachineLogs.length}
+                                            </span>
+                                          )}
+                                        </button>
+                                      );
+                                    })()}
                                   </td>
 
                                   {isGroupFirst && (
@@ -2136,7 +2201,254 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
-          {}
+          {/* Machine Maintenance & Issue Log Modal */}
+          {maintModal.open && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-2xl w-full p-5 shadow-2xl flex flex-col max-h-[90vh]">
+                
+                {/* Modal Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+                  <div className="flex items-center space-x-2">
+                    <span className="p-1.5 bg-blue-950 text-blue-400 border border-blue-800 rounded-lg text-base">🔧</span>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                        【{maintModal.machineName}】當班維修與異常紀錄
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        日期班別：<span className="text-blue-300 font-mono font-semibold">{selectedDate} {selectedShiftTime}班</span> ({categorizedPersonnel.dutySquad}當班)
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setMaintModal({ open: false, machineId: null, machineName: null });
+                      setEditingMaintId(null);
+                    }}
+                    className="text-slate-400 hover:text-white font-bold p-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1 min-h-0">
+                  
+                  {/* Maintenance Records List for Current Shift */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                        📋 當班維修明細表
+                        <span className="text-[10px] text-slate-400 font-normal">
+                          (共 {maintenanceLogs.filter(l => l.machineName === maintModal.machineName && l.shiftKey === currentShiftKey).length} 筆)
+                        </span>
+                      </span>
+                    </div>
+
+                    {(() => {
+                      const filteredLogs = maintenanceLogs.filter(
+                        l => l.machineName === maintModal.machineName && l.shiftKey === currentShiftKey
+                      );
+
+                      if (filteredLogs.length === 0) {
+                        return (
+                          <div className="text-center py-6 text-slate-500 text-xs bg-slate-950/60 rounded-lg border border-slate-800">
+                            🟢 目前當班尚無任何維修保養或異常紀錄
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                          {filteredLogs.map(log => {
+                            const isOngoing = !log.endTime;
+                            return (
+                              <div 
+                                key={log.id} 
+                                className={`p-3 rounded-lg border text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 transition ${
+                                  isOngoing 
+                                    ? "bg-rose-950/40 border-rose-800/80 text-rose-100" 
+                                    : "bg-slate-950/80 border-slate-800 text-slate-200"
+                                }`}
+                              >
+                                <div className="space-y-1 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                      isOngoing ? "bg-rose-600 text-white animate-pulse" : "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                                    }`}>
+                                      {isOngoing ? "⚠️ 維修處理中" : "✓ 已修復完成"}
+                                    </span>
+                                    <span className="font-bold text-slate-100 text-sm">{log.issue}</span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-400 font-mono flex items-center gap-3">
+                                    <span>⏱ 時間：{log.startTime || '--:--'} ~ {log.endTime || '進行中'}</span>
+                                    {log.note && <span className="text-slate-300">💬 備註：{log.note}</span>}
+                                  </div>
+                                </div>
+
+                                {userRole === 'admin' && (
+                                  <div className="flex items-center space-x-1 shrink-0 self-end sm:self-center">
+                                    <button
+                                      onClick={() => {
+                                        setEditingMaintId(log.id);
+                                        setNewMaintForm({
+                                          issue: log.issue,
+                                          startTime: log.startTime || "",
+                                          endTime: log.endTime || "",
+                                          note: log.note || ""
+                                        });
+                                      }}
+                                      className="text-slate-300 hover:text-white text-xs px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded border border-slate-700"
+                                    >
+                                      編輯
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteMaintLog(log.id)}
+                                      className="text-rose-400 hover:text-rose-200 text-xs px-2 py-1 bg-slate-800 hover:bg-rose-950 rounded border border-slate-700"
+                                    >
+                                      刪除
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Add / Edit Form (Admin Only) */}
+                  {userRole === 'admin' && (
+                    <form onSubmit={handleAddOrUpdateMaintLog} className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                        <span className="text-xs font-bold text-blue-300">
+                          {editingMaintId ? "✏️ 編輯維修紀錄" : "➕ 新增維修保養 / 異常紀錄"}
+                        </span>
+                        {editingMaintId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingMaintId(null);
+                              setNewMaintForm({ issue: "", startTime: new Date().toTimeString().slice(0, 5), endTime: "", note: "" });
+                            }}
+                            className="text-[11px] text-slate-400 hover:text-slate-200 underline"
+                          >
+                            取消編輯
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Quick Issue Category Tags */}
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">1. 異常原因 / 維修項目</label>
+                        <div className="flex flex-wrap gap-1 mb-1.5">
+                          {["極片卡料", "刀具磨損", "感應器異常", "氣壓不足", "換模換線保養", "電路故障", "馬達過熱", "定期保養"].map(tag => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => setNewMaintForm(prev => ({ ...prev, issue: tag }))}
+                              className={`text-[10px] px-2 py-0.5 rounded border transition ${
+                                newMaintForm.issue === tag
+                                  ? "bg-blue-600 text-white border-blue-500 font-bold"
+                                  : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-slate-200"
+                              }`}
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </div>
+                        <input
+                          type="text"
+                          required
+                          placeholder="請選擇上方標籤或自行輸入異常原因..."
+                          value={newMaintForm.issue}
+                          onChange={e => setNewMaintForm({ ...newMaintForm, issue: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      {/* Start & End Time Inputs */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[11px] font-semibold text-slate-400">2. 開始時間</label>
+                            <button
+                              type="button"
+                              onClick={() => setNewMaintForm(prev => ({ ...prev, startTime: new Date().toTimeString().slice(0, 5) }))}
+                              className="text-[10px] text-blue-400 hover:underline"
+                            >
+                              帶入現在
+                            </button>
+                          </div>
+                          <input
+                            type="time"
+                            value={newMaintForm.startTime}
+                            onChange={e => setNewMaintForm({ ...newMaintForm, startTime: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded focus:outline-none font-mono"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[11px] font-semibold text-slate-400">3. 結束時間 (若維修中可留空)</label>
+                            <button
+                              type="button"
+                              onClick={() => setNewMaintForm(prev => ({ ...prev, endTime: new Date().toTimeString().slice(0, 5) }))}
+                              className="text-[10px] text-emerald-400 hover:underline"
+                            >
+                              帶入現在
+                            </button>
+                          </div>
+                          <input
+                            type="time"
+                            value={newMaintForm.endTime}
+                            onChange={e => setNewMaintForm({ ...newMaintForm, endTime: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded focus:outline-none font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Note Input */}
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">4. 備註 / 處置說明</label>
+                        <input
+                          type="text"
+                          placeholder="例如：更換刀具元件、已排查訊號接線..."
+                          value={newMaintForm.note}
+                          onChange={e => setNewMaintForm({ ...newMaintForm, note: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-700 text-slate-100 text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div className="pt-1 flex justify-end">
+                        <button
+                          type="submit"
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow transition"
+                        >
+                          {editingMaintId ? "💾 儲存修復變更" : "➕ 新增維修紀錄"}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                </div>
+
+                <div className="pt-3 border-t border-slate-800 flex justify-end shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMaintModal({ open: false, machineId: null, machineName: null });
+                      setEditingMaintId(null);
+                    }}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-1.5 rounded-lg border border-slate-700"
+                  >
+                    關閉
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
           {/* Unsaved Changes Guard Prompt Modal */}
           {showUnsavedPrompt && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2882,7 +3194,13 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                               />
                               <button
                                 type="button"
-                                onClick={() => handleSaveEditMachineType(index)}
+                                onClick={() => {
+                                  if (!editingTypeValue.trim()) return;
+                                  const updated = machineTypes.map((t, i) => i === index ? editingTypeValue.trim() : t);
+                                  setMachineTypes(updated);
+                                  setEditingTypeIndex(null);
+                                  setEditingTypeValue("");
+                                }}
                                 className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-2.5 py-1 rounded font-medium"
                               >
                                 儲存
@@ -2909,7 +3227,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                             )}
                             <button
                               type="button"
-                              onClick={() => handleDeleteMachineType(type)}
+                              onClick={() => {
+                                setMachineTypes(machineTypes.filter(t => t !== type));
+                              }}
                               className="text-rose-400 hover:text-rose-200 text-xs px-2 py-1 bg-slate-800 rounded border border-slate-700"
                             >
                               刪除
@@ -2931,7 +3251,13 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                         />
                         <button
                           type="button"
-                          onClick={handleAddMachineType}
+                          onClick={() => {
+                            if (!newTypeName.trim()) return;
+                            if (!machineTypes.includes(newTypeName.trim())) {
+                              setMachineTypes([...machineTypes, newTypeName.trim()]);
+                              setNewTypeName("");
+                            }
+                          }}
                           className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded"
                         >
                           新增類型
@@ -3040,6 +3366,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
+          {}
           <footer className="bg-slate-950 border-t border-slate-900 py-3 text-center text-xs text-slate-500">
             製造管理看板 © 2026 - Supabase Connected ({realtimeMode})
           </footer>
