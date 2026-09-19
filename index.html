@@ -96,6 +96,12 @@
       </svg>
     );
 
+    const IconCloud = () => (
+      <svg className="w-3.5 h-3.5 mr-1 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+      </svg>
+    );
+
     const INITIAL_MACHINE_TYPES = ["羅得B", "Kaido", "先導", "覆捲機"];
 
     const INITIAL_OPERATORS_POOL_S1 = [
@@ -273,6 +279,18 @@
       { id: "m-30", type: "覆捲機", name: "RW19", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" }
     ];
 
+    const SQL_SETUP_SCRIPT = `-- 請在 Supabase 儀表板 SQL Editor 執行以下 SQL 語法：
+CREATE TABLE IF NOT EXISTS public.mfg_board (
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.mfg_board ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public Full Access" ON public.mfg_board;
+CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH CHECK (true);
+`;
+
     const getTodayStr = () => {
       const d = new Date();
       const year = d.getFullYear();
@@ -307,6 +325,7 @@
       });
 
       // Supabase State
+      const [showSupabaseModal, setShowSupabaseModal] = useState(false);
       const [supabaseUrl] = useState(() => localStorage.getItem("mfg_supabase_url") || DEFAULT_SUPABASE_URL || "");
       const [supabaseKey] = useState(() => localStorage.getItem("mfg_supabase_key") || DEFAULT_SUPABASE_KEY || "");
       const [supabaseConnected, setSupabaseConnected] = useState(false);
@@ -430,6 +449,10 @@
       const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
 
       // 管理員未儲存狀態計算 (檢視者免儲存提示)
+      // 註：由於現在大部分操作都會即時自動同步到雲端 (pushToSupabase)，
+      // 這個 isDirty 在正常情況下應該幾乎不會是 true；它保留下來是為了
+      // 在雲端寫入失敗、網路離線等異常情況下，仍然提醒使用者「這筆變更
+      // 目前只存在本機，尚未成功送上雲端」。
       const isDirty = useMemo(() => {
         if (userRole !== 'admin') return false;
         if (!savedSnapshot) return false;
@@ -597,9 +620,11 @@
                 }
               }
               setSupabaseConnected(true);
+              setSupabaseErrorMsg("");
             } catch(e) {
+              console.error("Supabase 初始資料讀取失敗，請確認 mfg_board 資料表已建立且 RLS 權限允許存取：", e);
               setSupabaseConnected(false);
-              setSupabaseErrorMsg((e && e.message) || "無法連線至 Supabase");
+              setSupabaseErrorMsg((e && (e.message || e.hint || e.details)) || "無法連線至 Supabase");
             }
           };
 
@@ -613,7 +638,12 @@
                     const remote = payload.new.data;
                     if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
                     if (remote.maintIssueTags) setMaintIssueTags(remote.maintIssueTags);
-                    
+                    if (remote.machineTypes) setMachineTypes(remote.machineTypes);
+                    if (remote.skillGroups) setSkillGroups(remote.skillGroups);
+                    if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
+                    if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
+                    if (remote.maintenanceLogs) setMaintenanceLogs(remote.maintenanceLogs);
+
                     if (!isDirtyRef.current) {
                       const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
                       const shiftData = remote.schedulesMap && remote.schedulesMap[shiftKey];
@@ -628,6 +658,9 @@
 
               channel.subscribe((status) => {
                 setRealtimeMode(status === 'SUBSCRIBED' ? "WebSocket 實時" : "HTTP 輪詢");
+                if (status === 'SUBSCRIBED') {
+                  setSupabaseConnected(true);
+                }
               });
             } catch(wsErr) {
               setRealtimeMode("HTTP 輪詢");
@@ -642,7 +675,12 @@
                 const remote = data.data;
                 if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
                 if (remote.maintIssueTags) setMaintIssueTags(remote.maintIssueTags);
-                
+                if (remote.machineTypes) setMachineTypes(remote.machineTypes);
+                if (remote.skillGroups) setSkillGroups(remote.skillGroups);
+                if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
+                if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
+                if (remote.maintenanceLogs) setMaintenanceLogs(remote.maintenanceLogs);
+
                 if (!isDirtyRef.current) {
                   const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
                   const shiftData = remote.schedulesMap && remote.schedulesMap[shiftKey];
@@ -654,7 +692,14 @@
                 }
               }
               setSupabaseConnected(true);
-            } catch(pollErr) {}
+              setSupabaseErrorMsg("");
+            } catch(pollErr) {
+              if (pollErr && pollErr.code !== 'PGRST116') {
+                console.error("輪詢 Supabase 失敗：", pollErr);
+                setSupabaseConnected(false);
+                setSupabaseErrorMsg((pollErr && pollErr.message) || "輪詢雲端資料失敗");
+              }
+            }
           }, 6000);
 
           return () => {
@@ -663,6 +708,7 @@
           };
         } catch(err) {
           setSupabaseConnected(false);
+          setSupabaseErrorMsg((err && err.message) || "初始化 Supabase 用戶端失敗");
         }
       }, [supabaseUrl, supabaseKey]);
 
@@ -711,14 +757,25 @@
         }
       }, [selectedDate, selectedShiftTime, scheduledShifts, categorizedPersonnel]);
 
-      const pushToSupabase = async (updatedFields) => {
+      // 修正核心：pushToSupabase 現在會依 updatedFields 裡明確帶入的
+      // machines / attendanceMap / currentShift 覆寫值來組成要送出的資料，
+      // 而不是使用呼叫當下可能還沒更新完成的 state closure，確保每次寫入
+      // 雲端的內容與畫面上剛剛發生的變更一致。
+      // silent=true (預設) 時不會跳出「已成功儲存」提示，避免每次勾選
+      // 出勤或指派人員都跳一次通知；只有手動按「儲存看板」時才顯示。
+      const pushToSupabase = async (updatedFields = {}, options = {}) => {
         if (!supabaseRef.current) return;
+        const { silent = true } = options;
         try {
+          const effectiveMachines = updatedFields.machines !== undefined ? updatedFields.machines : machines;
+          const effectiveAttendance = updatedFields.attendanceMap !== undefined ? updatedFields.attendanceMap : attendanceMap;
+          const effectiveShift = updatedFields.currentShift !== undefined ? updatedFields.currentShift : currentShift;
+
           const shiftKey = `${selectedDate}_${selectedShiftTime}`;
           const currentShiftSnap = {
-            machines,
-            attendanceMap,
-            currentShift
+            machines: effectiveMachines,
+            attendanceMap: effectiveAttendance,
+            currentShift: effectiveShift
           };
 
           const newSchedulesMap = {
@@ -728,9 +785,9 @@
           };
 
           const payloadState = {
-            machines,
-            currentShift,
-            attendanceMap,
+            machines: effectiveMachines,
+            currentShift: effectiveShift,
+            attendanceMap: effectiveAttendance,
             machineTypes,
             skillGroups,
             mStatusOptions,
@@ -738,7 +795,8 @@
             schedulesMap: newSchedulesMap,
             maintenanceLogs,
             maintIssueTags,
-            ...updatedFields
+            ...updatedFields,
+            schedulesMap: newSchedulesMap
           };
 
           const { error } = await supabaseRef.current.from('mfg_board').upsert({
@@ -749,16 +807,22 @@
 
           if (error) throw error;
           setSchedulesMap(newSchedulesMap);
-          setSavedSnapshot({ machines, attendanceMap });
+          setSavedSnapshot({ machines: effectiveMachines, attendanceMap: effectiveAttendance });
           setSupabaseConnected(true);
-          showNotice("已成功儲存看板變更至 Supabase 雲端！", "success");
+          setSupabaseErrorMsg("");
+          if (!silent) {
+            showNotice("已成功儲存看板變更至 Supabase 雲端！", "success");
+          }
         } catch(err) {
-          showNotice("⚠️ 雲端儲存失敗，資料僅保留在本機", "error");
+          console.error("寫入 Supabase 失敗：", err);
+          setSupabaseConnected(false);
+          setSupabaseErrorMsg((err && (err.message || err.hint || err.details)) || "寫入 Supabase 失敗");
+          showNotice("⚠️ 雲端同步失敗，此變更僅保留在本機，請檢查網路或 Supabase 設定", "error");
         }
       };
 
       const handleSaveBoard = () => {
-        pushToSupabase({});
+        pushToSupabase({}, { silent: false });
       };
 
       const performShiftChange = (targetDate, targetShiftTime) => {
@@ -782,7 +846,7 @@
       const handleConfirmUnsavedPrompt = async (shouldSave) => {
         setShowUnsavedPrompt(false);
         if (shouldSave) {
-          await pushToSupabase({});
+          await pushToSupabase({}, { silent: false });
         }
 
         if (pendingAction) {
@@ -856,6 +920,7 @@
         updated.splice(toIndex, 0, moved);
 
         setMachines(updated);
+        pushToSupabase({ machines: updated });
         showNotice(`已調整機台 [${moved.name}] 之順序`, "info");
       };
 
@@ -868,6 +933,7 @@
         const [moved] = updated.splice(idx, 1);
         updated.splice(targetIdx, 0, moved);
         setMachines(updated);
+        pushToSupabase({ machines: updated });
       };
 
       const currentShiftKey = `${selectedDate}_${selectedShiftTime}`;
@@ -992,6 +1058,7 @@
         const updated = [...validList, newG];
         setSkillGroups(updated);
         setSelectedGroupId(newG.id);
+        pushToSupabase({ skillGroups: updated });
         showNotice("已建立新分組，請設定涵蓋機台與人員", "info");
       };
 
@@ -999,6 +1066,7 @@
         const validList = Array.isArray(skillGroups) && skillGroups.length > 0 ? skillGroups : DEFAULT_SKILL_GROUPS;
         const updated = validList.map(g => g.id === id ? { ...g, name: newName } : g);
         setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
       };
 
       const handleToggleMachineInGroup = (groupId, machineName) => {
@@ -1011,6 +1079,7 @@
           return { ...g, machines: next };
         });
         setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
       };
 
       const handleToggleMemberInGroup = (groupId, personName) => {
@@ -1023,6 +1092,7 @@
           return { ...g, members: next };
         });
         setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
       };
 
       const handleDeleteGroup = (groupId) => {
@@ -1036,6 +1106,7 @@
             const updated = validList.filter(g => g.id !== groupId);
             setSkillGroups(updated);
             if (selectedGroupId === groupId) setSelectedGroupId(null);
+            pushToSupabase({ skillGroups: updated });
             showNotice(`已刪除分組 [${targetG ? targetG.name : ''}]`, "info");
           }
         });
@@ -1054,6 +1125,7 @@
               mStatus: "正常運轉"
             }));
             setMachines(updated);
+            pushToSupabase({ machines: updated });
             showNotice("看板已重置！操作員與預備員已清空，機況已恢復為正常運轉，料況完整保留。", "success");
           }
         });
@@ -1069,65 +1141,65 @@
       }, [machines]);
 
       const toggleAttendance = (name, isDuty) => {
-        setAttendanceMap(prev => {
-          const current = isPersonPresent(name, isDuty);
-          const nextVal = !current;
+        const current = isPersonPresent(name, isDuty);
+        const nextVal = !current;
+        const nextAttendance = { ...attendanceMap, [name]: nextVal };
 
-          if (!nextVal) {
-            setMachines(prevM => prevM.map(m => {
-              let updated = { ...m };
-              if (updated.operator === name) updated.operator = "";
-              if (updated.backup === name) updated.backup = "";
-              return updated;
-            }));
-          }
+        let updatedMachines = machines;
+        if (!nextVal) {
+          updatedMachines = machines.map(m => {
+            let updated = { ...m };
+            if (updated.operator === name) updated.operator = "";
+            if (updated.backup === name) updated.backup = "";
+            return updated;
+          });
+          setMachines(updatedMachines);
+        }
 
-          return { ...prev, [name]: nextVal };
-        });
+        setAttendanceMap(nextAttendance);
+        pushToSupabase({ attendanceMap: nextAttendance, machines: updatedMachines });
       };
 
       const selectAllDuty = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          currentDutyPool.forEach(p => { next[p] = true; });
-          return next;
-        });
+        const next = { ...attendanceMap };
+        currentDutyPool.forEach(p => { next[p] = true; });
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next });
       };
 
       const deselectAllDuty = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          currentDutyPool.forEach(p => { next[p] = false; });
-          setMachines(prevM => prevM.map(m => {
-            let updated = { ...m };
-            if (currentDutyPool.includes(updated.operator)) updated.operator = "";
-            if (currentDutyPool.includes(updated.backup)) updated.backup = "";
-            return updated;
-          }));
-          return next;
+        const next = { ...attendanceMap };
+        currentDutyPool.forEach(p => { next[p] = false; });
+        const updatedMachines = machines.map(m => {
+          let updated = { ...m };
+          if (currentDutyPool.includes(updated.operator)) updated.operator = "";
+          if (currentDutyPool.includes(updated.backup)) updated.backup = "";
+          return updated;
         });
+        setMachines(updatedMachines);
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next, machines: updatedMachines });
       };
 
       const selectAllSupport = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          currentSupportPool.forEach(p => { next[p] = true; });
-          return next;
-        });
+        const next = { ...attendanceMap };
+        currentSupportPool.forEach(p => { next[p] = true; });
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next });
       };
 
       const deselectAllSupport = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          currentSupportPool.forEach(p => { next[p] = false; });
-          setMachines(prevM => prevM.map(m => {
-            let updated = { ...m };
-            if (currentSupportPool.includes(updated.operator)) updated.operator = "";
-            if (currentSupportPool.includes(updated.backup)) updated.backup = "";
-            return updated;
-          }));
-          return next;
+        const next = { ...attendanceMap };
+        currentSupportPool.forEach(p => { next[p] = false; });
+        const updatedMachines = machines.map(m => {
+          let updated = { ...m };
+          if (currentSupportPool.includes(updated.operator)) updated.operator = "";
+          if (currentSupportPool.includes(updated.backup)) updated.backup = "";
+          return updated;
         });
+        setMachines(updatedMachines);
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next, machines: updatedMachines });
       };
 
       const dutyCheckedCount = useMemo(() => {
@@ -1219,6 +1291,7 @@
           return m;
         });
         setMachines(updated);
+        pushToSupabase({ machines: updated });
         showNotice("已移除該欄位指派人員", "info");
       };
 
@@ -1242,6 +1315,7 @@
         });
 
         setMachines(updated);
+        pushToSupabase({ machines: updated });
         setAssignModal({ open: false, machineId: null, role: null });
         showNotice(`已指派 [${personName}] 至 ${group ? group.name : targetM?.name}`, "success");
       };
@@ -1252,6 +1326,7 @@
 
         const updated = machines.map(m => m.id === machineId ? { ...m, [type]: val } : m);
         setMachines(updated);
+        pushToSupabase({ machines: updated });
         setStatusModal({ open: false, machineId: null, type: null });
         setIsManagingStatuses(false);
         showNotice("狀態更動完成", "info");
@@ -1268,9 +1343,13 @@
         };
 
         if (type === "mStatus") {
-          setMStatusOptions([...mStatusOptions, newOpt]);
+          const updated = [...mStatusOptions, newOpt];
+          setMStatusOptions(updated);
+          pushToSupabase({ mStatusOptions: updated });
         } else {
-          setMatStatusOptions([...matStatusOptions, newOpt]);
+          const updated = [...matStatusOptions, newOpt];
+          setMatStatusOptions(updated);
+          pushToSupabase({ matStatusOptions: updated });
         }
 
         setNewStatusForm({ label: "", colorIndex: 0 });
@@ -1280,9 +1359,13 @@
       const handleSaveEditedStatusLabel = (type, id) => {
         if (!editingStatusLabel.trim()) return;
         if (type === "mStatus") {
-          setMStatusOptions(mStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o));
+          const updated = mStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o);
+          setMStatusOptions(updated);
+          pushToSupabase({ mStatusOptions: updated });
         } else {
-          setMatStatusOptions(matStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o));
+          const updated = matStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o);
+          setMatStatusOptions(updated);
+          pushToSupabase({ matStatusOptions: updated });
         }
         setEditingStatusId(null);
         setEditingStatusLabel("");
@@ -1296,9 +1379,13 @@
           message: `確定要刪除「${label}」狀態選項嗎？`,
           onConfirm: () => {
             if (type === "mStatus") {
-              setMStatusOptions(mStatusOptions.filter(o => o.id !== id));
+              const updated = mStatusOptions.filter(o => o.id !== id);
+              setMStatusOptions(updated);
+              pushToSupabase({ mStatusOptions: updated });
             } else {
-              setMatStatusOptions(matStatusOptions.filter(o => o.id !== id));
+              const updated = matStatusOptions.filter(o => o.id !== id);
+              setMatStatusOptions(updated);
+              pushToSupabase({ matStatusOptions: updated });
             }
             showNotice(`已刪除狀態選項 [${label}]`, "info");
           }
@@ -1372,7 +1459,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
           matStatus: newMachine.matStatus || "",
           note: ""
         };
-        setMachines([...machines, newM]);
+        const updated = [...machines, newM];
+        setMachines(updated);
+        pushToSupabase({ machines: updated });
         setNewMachine({ type: machineTypes[0] || "", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
         setShowAddModal(false);
         showNotice(`已成功新增機台 [${newM.name}]`, "success");
@@ -1390,11 +1479,14 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 <p className="text-xs text-slate-400">
                   GitHub & Supabase 雲端實時同步系統
                 </p>
-                {!supabaseConnected && supabaseErrorMsg && (
-                  <p className="text-[11px] text-amber-400 bg-amber-950/60 border border-amber-800 rounded px-2 py-1 mt-1">
-                    ⚠️ 雲端連線狀態：{supabaseErrorMsg}
-                  </p>
-                )}
+                <div className={`text-[11px] rounded px-2 py-1 mt-1 inline-flex items-center gap-1 border ${
+                  supabaseConnected
+                    ? "text-emerald-300 bg-emerald-950/60 border-emerald-800"
+                    : "text-amber-400 bg-amber-950/60 border-amber-800"
+                }`}>
+                  <IconCloud />
+                  {supabaseConnected ? "雲端已連線" : `雲端未連線${supabaseErrorMsg ? `：${supabaseErrorMsg}` : ""}`}
+                </div>
               </div>
 
               <div className="space-y-4 pt-2">
@@ -1458,8 +1550,15 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 </form>
               </div>
 
-              <div className="text-center text-[11px] text-slate-500 pt-2 border-t border-slate-800">
-                預設管理員密碼：<code className="text-blue-400 font-mono">0000</code>
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800">
+                <span>預設管理員密碼：<code className="text-blue-400 font-mono">0000</code></span>
+                <button
+                  type="button"
+                  onClick={() => setShowSupabaseModal(true)}
+                  className="text-blue-400 hover:underline flex items-center"
+                >
+                  <IconCloud /> 雲端連線狀態
+                </button>
               </div>
 
             </div>
@@ -1485,6 +1584,17 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     }`}>
                       {userRole === 'admin' ? '🔑 管理員權限' : '👁️ 檢視者模式'}
                     </span>
+                    <button
+                      onClick={() => setShowSupabaseModal(true)}
+                      className={`text-[10px] border px-2 py-0.5 rounded-full font-normal transition flex items-center ${
+                        supabaseConnected 
+                          ? 'bg-emerald-950 text-emerald-300 border-emerald-700 hover:bg-emerald-900' 
+                          : 'bg-amber-950 text-amber-300 border-amber-700 hover:bg-amber-900'
+                      }`}
+                      title={supabaseConnected ? `雲端連線 (${realtimeMode})` : (supabaseErrorMsg || "雲端未連線")}
+                    >
+                      <IconCloud /> {supabaseConnected ? `雲端連線 (${realtimeMode})` : "單機模式 (未連線)"}
+                    </button>
                   </h1>
                 </div>
 
@@ -1505,9 +1615,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                           ? "bg-amber-500 hover:bg-amber-400 text-slate-950 animate-pulse shadow-amber-500/30"
                           : "bg-emerald-700 hover:bg-emerald-600 text-white"
                       }`}
-                      title="儲存目前班別之點名與派工資訊至雲端"
+                      title="所有變更已即時自動同步；此按鈕可再次手動強制儲存一次目前狀態"
                     >
-                      💾 儲存看板 {isDirty ? "(未儲存)" : ""}
+                      💾 儲存看板 {isDirty ? "(尚未同步)" : ""}
                     </button>
 
                     <button 
@@ -2227,7 +2337,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                             title: "刪除機台確認",
                                             message: `確定要刪除機台 [${machine.name}] 嗎？`,
                                             onConfirm: () => {
-                                              setMachines(machines.filter(m => m.id !== machine.id));
+                                              const updated = machines.filter(m => m.id !== machine.id);
+                                              setMachines(updated);
+                                              pushToSupabase({ machines: updated });
                                               showNotice(`已刪除機台 [${machine.name}]`, "info");
                                             }
                                           });
@@ -2561,15 +2673,68 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
+          {/* Supabase Connection Status Modal */}
+          {showSupabaseModal && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                    <IconCloud /> Supabase 雲端連線狀態
+                  </h3>
+                  <button onClick={() => setShowSupabaseModal(false)} className="text-slate-400 hover:text-white font-bold">✕</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+                  <div className={`p-2.5 rounded-lg border text-[11px] leading-relaxed ${
+                    supabaseConnected
+                      ? "bg-emerald-950/60 border-emerald-800 text-emerald-300"
+                      : "bg-amber-950/60 border-amber-800 text-amber-300"
+                  }`}>
+                    {supabaseConnected
+                      ? `✅ 目前狀態：已成功連線至雲端資料庫 (${realtimeMode})，所有變更會即時同步給其他裝置`
+                      : `⚠️ 目前狀態：尚未連線${supabaseErrorMsg ? `　原因：${supabaseErrorMsg}` : ""}`}
+                  </div>
+
+                  <div className="border-t border-slate-800 pt-3 space-y-2">
+                    <div className="font-bold text-amber-400 flex items-center gap-1">
+                      ⚡ Supabase 資料庫建立腳本 (SQL Editor)
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">
+                      若上方顯示「尚未連線」，最常見原因是還沒建立 <code className="text-blue-300">mfg_board</code> 這張表。
+                      複製下方 SQL 語法至 Supabase 儀表板中的 <strong>SQL Editor</strong> 執行即可：
+                    </p>
+                    <textarea
+                      readOnly
+                      value={SQL_SETUP_SCRIPT}
+                      className="w-full h-32 bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-[10px] p-2.5 rounded focus:outline-none"
+                    />
+                    <p className="text-slate-500 text-[10px] leading-relaxed">
+                      💡 建表後回到此看板重新整理頁面即可自動連線。這個版本的 Supabase 網址與金鑰是寫死在程式碼內（DEFAULT_SUPABASE_URL / DEFAULT_SUPABASE_KEY），所有裝置都是連到同一個資料庫。
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 flex justify-end shrink-0">
+                  <button
+                    onClick={() => setShowSupabaseModal(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-1.5 rounded text-xs border border-slate-700"
+                  >
+                    關閉視窗
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Unsaved Changes Guard Prompt Modal */}
           {showUnsavedPrompt && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-amber-500/60 rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
                 <h3 className="text-base font-bold text-amber-300 flex items-center gap-2">
-                  ⚠️ 尚有未儲存的變更！
+                  ⚠️ 有變更尚未成功同步到雲端！
                 </h3>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  您剛才修改了看板的派工或點名狀況，切換日期或班別前是否需要儲存？
+                  剛才的派工或點名變更似乎尚未成功送上雲端（可能是網路不穩或雲端連線失敗），切換日期或班別前是否需要再嘗試儲存一次？
                 </p>
                 <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
                   <button
@@ -2582,7 +2747,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     onClick={() => handleConfirmUnsavedPrompt(true)}
                     className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-1.5 rounded text-xs font-semibold shadow"
                   >
-                    💾 儲存並繼續
+                    💾 再試一次並繼續
                   </button>
                 </div>
               </div>
@@ -3307,8 +3472,13 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 type="button"
                                 onClick={() => {
                                   if (!editingTypeValue.trim()) return;
-                                  const updated = machineTypes.map((t, i) => i === index ? editingTypeValue.trim() : t);
-                                  setMachineTypes(updated);
+                                  const oldType = machineTypes[index];
+                                  const newTypeVal = editingTypeValue.trim();
+                                  const updatedTypes = machineTypes.map((t, i) => i === index ? newTypeVal : t);
+                                  const updatedMachines = machines.map(m => m.type === oldType ? { ...m, type: newTypeVal } : m);
+                                  setMachineTypes(updatedTypes);
+                                  setMachines(updatedMachines);
+                                  pushToSupabase({ machineTypes: updatedTypes, machines: updatedMachines });
                                   setEditingTypeIndex(null);
                                   setEditingTypeValue("");
                                 }}
@@ -3339,7 +3509,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                             <button
                               type="button"
                               onClick={() => {
-                                setMachineTypes(machineTypes.filter(t => t !== type));
+                                const updated = machineTypes.filter(t => t !== type);
+                                setMachineTypes(updated);
+                                pushToSupabase({ machineTypes: updated });
                               }}
                               className="text-rose-400 hover:text-rose-200 text-xs px-2 py-1 bg-slate-800 rounded border border-slate-700"
                             >
@@ -3365,7 +3537,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                           onClick={() => {
                             if (!newTypeName.trim()) return;
                             if (!machineTypes.includes(newTypeName.trim())) {
-                              setMachineTypes([...machineTypes, newTypeName.trim()]);
+                              const updated = [...machineTypes, newTypeName.trim()];
+                              setMachineTypes(updated);
+                              pushToSupabase({ machineTypes: updated });
                               setNewTypeName("");
                             }
                           }}
