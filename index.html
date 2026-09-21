@@ -245,7 +245,6 @@
       { label: "暗夜黑 (停用/停產)", color: "bg-zinc-800 text-zinc-200 border-zinc-600", badge: "bg-zinc-500" }
     ];
 
-    // 新排列順序：通用 -> Kaido -> 先導 -> 羅得B -> 覆捲機
     const DEFAULT_MACHINES = [
       { id: "m-01", type: "", name: "領班", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-02", type: "", name: "QC", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
@@ -308,23 +307,10 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       return `${year}-${month}-${day}`;
     };
 
-    // 判斷料況是否屬於「待料停機」大類 (待料中/待正極片/待負極片/待TRAY停機/其他「待」開頭狀態)
-    // 統計卡片與機台動態看板篩選都共用這個判斷邏輯，避免兩處邏輯不一致。
-    const isWaitingMaterialStatus = (matStatus) => {
-      return !!matStatus && (
-        matStatus === "待料中" ||
-        matStatus === "待正極片" ||
-        matStatus === "待負極片" ||
-        matStatus === "待TRAY停機" ||
-        matStatus.startsWith("待")
-      );
-    };
-
     function App() {
       const todayStr = useMemo(() => getTodayStr(), []);
       const [selectedDate, setSelectedDate] = useState(todayStr);
 
-      // 06:30 ~ 18:30 自動預設載入「日班」，18:30 ~ 06:30 自動載入「夜班」
       const [selectedShiftTime, setSelectedShiftTime] = useState(() => {
         const now = new Date();
         const mins = now.getHours() * 60 + now.getMinutes();
@@ -386,6 +372,13 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [maintModal, setMaintModal] = useState({ open: false, machineId: null, machineName: null });
       const [newMaintForm, setNewMaintForm] = useState({ issue: "", startTime: "", endTime: "", note: "" });
       const [editingMaintId, setEditingMaintId] = useState(null);
+
+      // 新增：全區域跨班/跨機台維修紀錄查詢彈出視窗 State
+      const [showMaintQueryModal, setShowMaintQueryModal] = useState(false);
+      const [maintQueryDate, setMaintQueryDate] = useState(todayStr);
+      const [maintQueryShift, setMaintQueryShift] = useState("ALL");
+      const [maintQueryMachine, setMaintQueryMachine] = useState("ALL");
+      const [maintQueryKeyword, setMaintQueryKeyword] = useState("");
 
       const [squadRosters, setSquadRosters] = useState({
         S1: INITIAL_OPERATORS_POOL_S1,
@@ -460,11 +453,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [pendingAction, setPendingAction] = useState(null);
       const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
 
-      // 管理員未儲存狀態計算 (檢視者免儲存提示)
-      // 註：由於現在大部分操作都會即時自動同步到雲端 (pushToSupabase)，
-      // 這個 isDirty 在正常情況下應該幾乎不會是 true；它保留下來是為了
-      // 在雲端寫入失敗、網路離線等異常情況下，仍然提醒使用者「這筆變更
-      // 目前只存在本機，尚未成功送上雲端」。
       const isDirty = useMemo(() => {
         if (userRole !== 'admin') return false;
         if (!savedSnapshot) return false;
@@ -546,7 +534,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
-      // 全系統統一出勤判定函式
       const isPersonPresent = (personName, isDuty) => {
         if (attendanceMap[personName] !== undefined) {
           return !!attendanceMap[personName];
@@ -638,7 +625,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
               setSupabaseConnected(true);
               setSupabaseErrorMsg("");
             } catch(e) {
-              console.error("Supabase 初始資料讀取失敗，請確認 mfg_board 資料表已建立且 RLS 權限允許存取：", e);
+              console.error("Supabase 初始資料讀取失敗：", e);
               setSupabaseConnected(false);
               setSupabaseErrorMsg((e && (e.message || e.hint || e.details)) || "無法連線至 Supabase");
             }
@@ -781,12 +768,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         }
       }, [selectedDate, selectedShiftTime, scheduledShifts, categorizedPersonnel]);
 
-      // 修正核心：pushToSupabase 現在會依 updatedFields 裡明確帶入的
-      // machines / attendanceMap / currentShift 覆寫值來組成要送出的資料，
-      // 而不是使用呼叫當下可能還沒更新完成的 state closure，確保每次寫入
-      // 雲端的內容與畫面上剛剛發生的變更一致。
-      // silent=true (預設) 時不會跳出「已成功儲存」提示，避免每次勾選
-      // 出勤或指派人員都跳一次通知；只有手動按「儲存看板」時才顯示。
       const pushToSupabase = async (updatedFields = {}, options = {}) => {
         if (!supabaseRef.current) return;
         const { silent = true } = options;
@@ -975,6 +956,27 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         return `(${diff}分)`;
       };
 
+      // 跨班/跨機台維修記錄篩選計算
+      const queriedMaintLogs = useMemo(() => {
+        return maintenanceLogs.filter(log => {
+          if (!log.shiftKey) return false;
+          const [lDate, lShift] = log.shiftKey.split('_');
+
+          if (maintQueryDate && lDate !== maintQueryDate) return false;
+          if (maintQueryShift !== "ALL" && lShift !== maintQueryShift) return false;
+          if (maintQueryMachine !== "ALL" && log.machineName !== maintQueryMachine) return false;
+
+          if (maintQueryKeyword.trim()) {
+            const q = maintQueryKeyword.trim().toLowerCase();
+            const matchIssue = log.issue && log.issue.toLowerCase().includes(q);
+            const matchNote = log.note && log.note.toLowerCase().includes(q);
+            const matchMachine = log.machineName && log.machineName.toLowerCase().includes(q);
+            if (!matchIssue && !matchNote && !matchMachine) return false;
+          }
+          return true;
+        });
+      }, [maintenanceLogs, maintQueryDate, maintQueryShift, maintQueryMachine, maintQueryKeyword]);
+
       const handleAddOrUpdateMaintLog = (e) => {
         e.preventDefault();
         if (!newMaintForm.issue.trim()) {
@@ -1007,7 +1009,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           showNotice(`已新增 [${maintModal.machineName}] 維修異常紀錄`, "success");
         }
 
-        // 自動變更機況：若未完修 (無結束時間)，機況自動選擇 "設備異常"；若已完修 (有結束時間)，機況自動選擇 "正常運轉"
         let updatedMachines = machines;
         if (!newMaintForm.endTime || !newMaintForm.endTime.trim()) {
           updatedMachines = machines.map(m =>
@@ -1254,7 +1255,13 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const down = machines.filter(m => m.mStatus === "設備異常" && isCountedMachine(m)).length;
         const maint = machines.filter(m => m.mStatus === "停機保養" && isCountedMachine(m)).length;
         
-        const isWaitingMaterial = m => isWaitingMaterialStatus(m.matStatus);
+        const isWaitingMaterial = m => m.matStatus && (
+          m.matStatus === "待料中" || 
+          m.matStatus === "待正極片" || 
+          m.matStatus === "待負極片" || 
+          m.matStatus === "待TRAY停機" || 
+          m.matStatus.startsWith("待")
+        );
         const waitingMaterial = machines.filter(m => isWaitingMaterial(m) && isCountedMachine(m)).length;
 
         return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint, waitingMaterial };
@@ -1272,15 +1279,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         return parts.length > 0 ? parts.join("；") : "";
       }, [machines]);
 
-      // 點擊統計卡片 (正常運轉/設備異常/停機保養/待料停機) 時切換篩選；
-      // 再點一次同一張卡片會取消篩選 (回到「全部」)。
-      const toggleStatusFilter = (value) => {
-        setFilterStatus(prev => prev === value ? "ALL" : value);
-      };
-      const toggleMatStatusFilter = (value) => {
-        setFilterMatStatus(prev => prev === value ? "ALL" : value);
-      };
-
       const filteredMachines = useMemo(() => {
         const query = searchTerm.trim().toLowerCase();
         return machines.filter(m => {
@@ -1290,9 +1288,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             ? true 
             : filterMatStatus === "UNSET" 
               ? !m.matStatus 
-              : filterMatStatus === "WAITING"
-                ? isWaitingMaterialStatus(m.matStatus)
-                : m.matStatus === filterMatStatus;
+              : m.matStatus === filterMatStatus;
           const matchSearch = !query || 
             m.name.toLowerCase().includes(query) ||
             (m.type && m.type.toLowerCase().includes(query)) ||
@@ -1507,10 +1503,10 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 <h1 className="text-2xl font-black text-slate-100 tracking-wider">
                   製造管理看板
                 </h1>
-                <p className="text-xs text-slate-400 whitespace-nowrap">
+                <p className="text-xs text-slate-400">
                   GitHub & Supabase 雲端實時同步系統
                 </p>
-                <div className={`text-[11px] rounded-md px-2.5 py-1 mt-1 inline-flex items-center gap-1 border whitespace-nowrap ${
+                <div className={`text-[11px] rounded px-2 py-1 mt-1 inline-flex items-center gap-1 border ${
                   supabaseConnected
                     ? "text-emerald-300 bg-emerald-950/60 border-emerald-800"
                     : "text-amber-400 bg-amber-950/60 border-amber-800"
@@ -1606,9 +1602,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               
               <div className="flex items-center space-x-3 w-full md:w-auto justify-between md:justify-start">
                 <div className="flex items-center space-x-3">
-                  <h1 className="text-xl font-black tracking-wider text-slate-100 flex items-center flex-wrap gap-2">
+                  <h1 className="text-xl font-black tracking-wider text-slate-100 flex items-center gap-2">
                     製造管理看板
-                    <span className={`text-xs border px-2 py-0.5 rounded-full font-normal whitespace-nowrap ${
+                    <span className={`text-xs border px-2 py-0.5 rounded-full font-normal ${
                       userRole === 'admin' 
                         ? 'bg-purple-900/60 text-purple-300 border-purple-500/30' 
                         : 'bg-emerald-900/60 text-emerald-300 border-emerald-500/30'
@@ -1617,7 +1613,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     </span>
                     <button
                       onClick={() => setShowSupabaseModal(true)}
-                      className={`text-xs whitespace-nowrap border px-2.5 py-1 rounded-md font-normal transition flex items-center shrink-0 ${
+                      className={`text-[10px] border px-2 py-0.5 rounded-full font-normal transition flex items-center ${
                         supabaseConnected 
                           ? 'bg-emerald-950 text-emerald-300 border-emerald-700 hover:bg-emerald-900' 
                           : 'bg-amber-950 text-amber-300 border-amber-700 hover:bg-amber-900'
@@ -1637,6 +1633,21 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               {/* Action Buttons */}
               <div className="flex items-center flex-wrap gap-2 w-full md:w-auto justify-end">
                 
+                {/* 跨班/跨機台維修紀錄查詢按鈕 (全權限與檢視者皆可存取) */}
+                <button 
+                  onClick={() => {
+                    setMaintQueryDate(selectedDate);
+                    setMaintQueryShift("ALL");
+                    setMaintQueryMachine("ALL");
+                    setMaintQueryKeyword("");
+                    setShowMaintQueryModal(true);
+                  }}
+                  className="bg-amber-700 hover:bg-amber-600 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition shadow"
+                  title="開啓全區跨班/跨機台維修紀錄查詢"
+                >
+                  🔍 維修紀錄查詢
+                </button>
+
                 {userRole === 'admin' && (
                   <>
                     <button
@@ -1827,62 +1838,22 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 <div className="text-xs text-blue-400 font-medium">加班支援 ({categorizedPersonnel.supportSquad})</div>
                 <div className="text-2xl font-bold text-blue-300 mt-1">{stats.overtimeCount} <span className="text-xs text-slate-400 font-normal">人</span></div>
               </div>
-              <button
-                type="button"
-                onClick={() => toggleStatusFilter("正常運轉")}
-                className={`text-left bg-slate-900/80 border p-3 rounded-lg shadow-sm transition hover:border-emerald-600 ${
-                  filterStatus === "正常運轉" ? "border-emerald-500 ring-1 ring-emerald-500/60 bg-emerald-950/30" : "border-slate-800"
-                }`}
-                title="點擊篩選正常運轉機台，再點一次取消篩選"
-              >
-                <div className="text-xs text-emerald-400 font-medium flex items-center justify-between">
-                  <span>正常運轉機台</span>
-                  {filterStatus === "正常運轉" && <span className="text-[9px] bg-emerald-600 text-white px-1 rounded shrink-0">篩選中</span>}
-                </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-emerald-400 font-medium">正常運轉機台</div>
                 <div className="text-2xl font-bold text-emerald-400 mt-1">{stats.running} <span className="text-xs text-slate-400 font-normal">台</span></div>
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleStatusFilter("設備異常")}
-                className={`text-left bg-slate-900/80 border p-3 rounded-lg shadow-sm transition hover:border-rose-600 ${
-                  filterStatus === "設備異常" ? "border-rose-500 ring-1 ring-rose-500/60 bg-rose-950/30" : "border-slate-800"
-                }`}
-                title="點擊篩選設備異常機台，再點一次取消篩選"
-              >
-                <div className="text-xs text-rose-400 font-medium flex items-center justify-between">
-                  <span>設備異常機台</span>
-                  {filterStatus === "設備異常" && <span className="text-[9px] bg-rose-600 text-white px-1 rounded shrink-0">篩選中</span>}
-                </div>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-rose-400 font-medium">設備異常機台</div>
                 <div className="text-2xl font-bold text-rose-400 mt-1">{stats.down} <span className="text-xs text-slate-400 font-normal">台</span></div>
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleStatusFilter("停機保養")}
-                className={`text-left bg-slate-900/80 border p-3 rounded-lg shadow-sm transition hover:border-amber-600 ${
-                  filterStatus === "停機保養" ? "border-amber-500 ring-1 ring-amber-500/60 bg-amber-950/30" : "border-slate-800"
-                }`}
-                title="點擊篩選停機保養機台，再點一次取消篩選"
-              >
-                <div className="text-xs text-amber-400 font-medium flex items-center justify-between">
-                  <span>停機保養機台</span>
-                  {filterStatus === "停機保養" && <span className="text-[9px] bg-amber-600 text-slate-950 px-1 rounded shrink-0">篩選中</span>}
-                </div>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-amber-400 font-medium">停機保養機台</div>
                 <div className="text-2xl font-bold text-amber-300 mt-1">{stats.maint} <span className="text-xs text-slate-400 font-normal">台</span></div>
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleMatStatusFilter("WAITING")}
-                className={`text-left bg-slate-900/80 border p-3 rounded-lg shadow-sm transition hover:border-orange-600 ${
-                  filterMatStatus === "WAITING" ? "border-orange-500 ring-1 ring-orange-500/60 bg-orange-950/30" : "border-slate-800"
-                }`}
-                title="點擊篩選所有待料停機機台，再點一次取消篩選"
-              >
-                <div className="text-xs text-orange-400 font-medium flex items-center justify-between">
-                  <span>待料停機機台</span>
-                  {filterMatStatus === "WAITING" && <span className="text-[9px] bg-orange-600 text-white px-1 rounded shrink-0">篩選中</span>}
-                </div>
+              </div>
+              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
+                <div className="text-xs text-orange-400 font-medium">待料停機機台</div>
                 <div className="text-2xl font-bold text-orange-400 mt-1">{stats.waitingMaterial} <span className="text-xs text-slate-400 font-normal">台</span></div>
-              </button>
+              </div>
             </div>
 
             {/* On-site Roll Call Table */}
@@ -2065,7 +2036,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 >
                   <option value="ALL">全部料況</option>
                   <option value="UNSET">未設定料況</option>
-                  <option value="WAITING">待料停機 (所有待料狀態)</option>
                   {matStatusOptions.map(opt => (
                     <option key={opt.id} value={opt.label}>{opt.label}</option>
                   ))}
@@ -2446,6 +2416,194 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
+          {/* 全區域跨班/跨機台維修記錄查詢 Modal (跳出新視窗) */}
+          {showMaintQueryModal && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-4xl w-full p-5 shadow-2xl flex flex-col h-[85vh]">
+                
+                {/* 標題欄 */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+                  <div className="flex items-center space-x-2">
+                    <span className="p-1.5 bg-amber-950 text-amber-400 border border-amber-800 rounded-lg text-base">🔧</span>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                        每天/各班/各機台 維修保養記錄查詢
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        跨日期、班別與機台的綜合維修保養歷史紀錄查詢視窗
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowMaintQueryModal(false)}
+                    className="text-slate-400 hover:text-white font-bold p-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* 篩選工具列 */}
+                <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-lg my-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">📅 查詢日期</label>
+                    <div className="flex items-center space-x-1">
+                      <input
+                        type="date"
+                        value={maintQueryDate}
+                        onChange={e => setMaintQueryDate(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2 py-1.5 rounded focus:outline-none focus:border-amber-500 font-mono w-full"
+                      />
+                      {maintQueryDate && (
+                        <button
+                          onClick={() => setMaintQueryDate("")}
+                          className="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-[10px] px-2 py-1.5 rounded border border-slate-700 whitespace-nowrap"
+                          title="顯示全部日期的記錄"
+                        >
+                          全選
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">☀️/🌙 班別篩選</label>
+                    <select
+                      value={maintQueryShift}
+                      onChange={e => setMaintQueryShift(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2 py-1.5 rounded w-full focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="ALL">全部班別 (日+夜)</option>
+                      <option value="日">日班</option>
+                      <option value="夜">夜班</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">🏭 機台篩選</label>
+                    <select
+                      value={maintQueryMachine}
+                      onChange={e => setMaintQueryMachine(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2 py-1.5 rounded w-full focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="ALL">全部機台</option>
+                      {machines.map(m => (
+                        <option key={m.id} value={m.name}>{m.name} {m.type ? `(${m.type})` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">🔍 關鍵字搜尋</label>
+                    <input
+                      type="text"
+                      placeholder="原因/備註/機台..."
+                      value={maintQueryKeyword}
+                      onChange={e => setMaintQueryKeyword(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded w-full focus:outline-none focus:border-amber-500 placeholder-slate-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 統計摘要資訊 */}
+                <div className="flex items-center justify-between px-1 mb-2 text-xs text-slate-400 shrink-0">
+                  <div className="flex items-center space-x-3">
+                    <span>查詢結果: <strong className="text-amber-400 font-bold">{queriedMaintLogs.length}</strong> 筆記錄</span>
+                    <span>處理中: <strong className="text-rose-400 font-bold">{queriedMaintLogs.filter(l => !l.endTime).length}</strong> 筆</span>
+                    <span>完修: <strong className="text-emerald-400 font-bold">{queriedMaintLogs.filter(l => !!l.endTime).length}</strong> 筆</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setMaintQueryDate("");
+                      setMaintQueryShift("ALL");
+                      setMaintQueryMachine("ALL");
+                      setMaintQueryKeyword("");
+                    }}
+                    className="text-amber-400 hover:underline text-[11px]"
+                  >
+                    重置所有篩選
+                  </button>
+                </div>
+
+                {/* 紀錄數據列表 */}
+                <div className="flex-1 overflow-y-auto border border-slate-800 rounded-lg bg-slate-950/60 min-h-0">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-950 text-slate-300 sticky top-0 z-10 border-b border-slate-800 shadow">
+                      <tr>
+                        <th className="p-2 font-semibold w-28">日期班別</th>
+                        <th className="p-2 font-semibold w-20">機台</th>
+                        <th className="p-2 font-semibold">異常原因 / 維修項目</th>
+                        <th className="p-2 font-semibold w-28">維修時間</th>
+                        <th className="p-2 font-semibold w-20">歷時</th>
+                        <th className="p-2 font-semibold w-24">處理狀態</th>
+                        <th className="p-2 font-semibold">處置備註</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80">
+                      {queriedMaintLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="text-center py-12 text-slate-500">
+                            無符合條件之維修紀錄
+                          </td>
+                        </tr>
+                      ) : (
+                        queriedMaintLogs.map(log => {
+                          const [lDate, lShift] = (log.shiftKey || "_").split('_');
+                          const isOngoing = !log.endTime;
+                          const durationStr = getMaintDuration(log.startTime, log.endTime);
+
+                          return (
+                            <tr key={log.id} className="hover:bg-slate-800/40 transition">
+                              <td className="p-2 font-mono text-[11px] text-slate-300 whitespace-nowrap">
+                                <div>{lDate || '未指定'}</div>
+                                <div className="text-[10px] text-amber-400">{lShift ? `${lShift}班` : ''}</div>
+                              </td>
+                              <td className="p-2 font-bold text-slate-100 whitespace-nowrap">
+                                {log.machineName}
+                              </td>
+                              <td className="p-2 text-slate-200 font-medium">
+                                {log.issue}
+                              </td>
+                              <td className="p-2 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                                {log.startTime || '--:--'} ~ {log.endTime || '進行中'}
+                              </td>
+                              <td className="p-2 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                                {durationStr || '-'}
+                              </td>
+                              <td className="p-2 whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  isOngoing 
+                                    ? "bg-rose-950 text-rose-300 border border-rose-700 animate-pulse" 
+                                    : "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                                }`}>
+                                  {isOngoing ? "⚠️ 處理中" : "✓ 已完修"}
+                                </span>
+                              </td>
+                              <td className="p-2 text-slate-400 text-[11px]">
+                                {log.note || '-'}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 底部關閉按鈕 */}
+                <div className="pt-3 border-t border-slate-800 flex justify-end shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowMaintQueryModal(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-5 py-2 rounded-lg border border-slate-700"
+                  >
+                    關閉視窗
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
           {/* Machine Maintenance & Issue Log Modal */}
           {maintModal.open && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2764,7 +2922,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   }`}>
                     {supabaseConnected
                       ? `✅ 目前狀態：已成功連線至雲端資料庫 (${realtimeMode})，所有變更會即時同步給其他裝置`
-                      : `⚠️ 目前狀態：尚未連線${supabaseErrorMsg ? `　原因：${supabaseErrorMsg}` : ""}`}
+                      : `⚠️ 目前狀態：尚未連線${supabaseErrorMsg ? ` 原因：${supabaseErrorMsg}` : ""}`}
                   </div>
 
                   <div className="border-t border-slate-800 pt-3 space-y-2">
