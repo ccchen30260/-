@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+[source: 1]<!DOCTYPE html>
 <html lang="zh-TW" class="dark">
 <head>
   <meta charset="UTF-8">
@@ -58,6 +58,9 @@
     const DEFAULT_MAINT_ISSUE_TAGS = [
       "極片卡料", "刀具磨損", "感應器異常", "氣壓不足", "換模換線保養", "電路故障", "馬達過熱", "定期保養"
     ];
+
+    // 維修紀錄查詢時排除非機台之工作站/職位名稱
+    const EXCLUDED_QUERY_STATIONS = ["領班", "QC", "極片搬運", "6S", "支援組裝"];
 
     const { useState, useEffect, useMemo, useRef } = React;
 
@@ -373,7 +376,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [newMaintForm, setNewMaintForm] = useState({ issue: "", startTime: "", endTime: "", note: "" });
       const [editingMaintId, setEditingMaintId] = useState(null);
 
-      // 新增：全區域跨班/跨機台維修紀錄查詢彈出視窗 State
+      // 全區域跨班/跨機台維修紀錄查詢彈出視窗 State
       const [showMaintQueryModal, setShowMaintQueryModal] = useState(false);
       const [maintQueryDate, setMaintQueryDate] = useState(todayStr);
       const [maintQueryShift, setMaintQueryShift] = useState("ALL");
@@ -956,10 +959,13 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         return `(${diff}分)`;
       };
 
-      // 跨班/跨機台維修記錄篩選計算
+      // 跨班/跨機台維修記錄篩選計算 (自動過濾非機台項目)
       const queriedMaintLogs = useMemo(() => {
         return maintenanceLogs.filter(log => {
           if (!log.shiftKey) return false;
+          // 自動排除非機台項目
+          if (EXCLUDED_QUERY_STATIONS.includes(log.machineName)) return false;
+
           const [lDate, lShift] = log.shiftKey.split('_');
 
           if (maintQueryDate && lDate !== maintQueryDate) return false;
@@ -2486,9 +2492,11 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2 py-1.5 rounded w-full focus:outline-none focus:border-amber-500"
                     >
                       <option value="ALL">全部機台</option>
-                      {machines.map(m => (
-                        <option key={m.id} value={m.name}>{m.name} {m.type ? `(${m.type})` : ''}</option>
-                      ))}
+                      {machines
+                        .filter(m => !EXCLUDED_QUERY_STATIONS.includes(m.name))
+                        .map(m => (
+                          <option key={m.id} value={m.name}>{m.name} {m.type ? `(${m.type})` : ''}</option>
+                        ))}
                     </select>
                   </div>
 
