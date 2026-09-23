@@ -1149,17 +1149,16 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         setConfirmDialog({
           open: true,
           title: "重置看板確認",
-          message: "確定要重置看板嗎？所有機台的「操作員」與「預備員」將清空，且「機況」恢復為「正常運轉」（「料況」將保留不變）。",
+          message: "確定要重置看板嗎？所有機台的「操作員」與「預備員」將清空，「機況」與「料況」皆將保留不變。",
           onConfirm: () => {
             const updated = machines.map(m => ({
               ...m,
               operator: "",
-              backup: "",
-              mStatus: "正常運轉"
+              backup: ""
             }));
             setMachines(updated);
             pushToSupabase({ machines: updated });
-            showNotice("看板已重置！操作員與預備員已清空，機況已恢復為正常運轉，料況完整保留。", "success");
+            showNotice("看板已重置！操作員與預備員已清空，機況與料況完整保留。", "success");
           }
         });
       };
