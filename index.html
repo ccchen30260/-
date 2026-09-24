@@ -219,14 +219,17 @@
       { id: "ms-5", label: "換模換線", color: "bg-blue-600 text-blue-100 border-blue-400", badge: "bg-blue-400" }
     ];
 
+    // 預載包含 P/M 開頭料號範例 (如 P50B、M35A)
     const DEFAULT_MATERIAL_STATUS_OPTIONS = [
-      { id: "mat-1", label: "供料正常",   color: "bg-emerald-700 text-emerald-100 border-emerald-500" },
-      { id: "mat-2", label: "待料中",     color: "bg-orange-600 text-orange-100 border-orange-400" },
-      { id: "mat-3", label: "待正極片",   color: "bg-amber-600 text-amber-100 border-amber-400" },
-      { id: "mat-4", label: "待負極片",   color: "bg-yellow-600 text-yellow-100 border-yellow-400" },
-      { id: "mat-5", label: "待TRAY停機", color: "bg-rose-600 text-rose-100 border-rose-400" },
-      { id: "mat-6", label: "備料中",     color: "bg-indigo-600 text-indigo-100 border-indigo-400" },
-      { id: "mat-7", label: "物料異常",   color: "bg-rose-700 text-rose-100 border-rose-400" }
+      { id: "mat-pm1", label: "P50B",     color: "bg-indigo-700 text-indigo-100 border-indigo-500" },
+      { id: "mat-pm2", label: "M35A",     color: "bg-purple-700 text-purple-100 border-purple-500" },
+      { id: "mat-1",   label: "供料正常", color: "bg-emerald-700 text-emerald-100 border-emerald-500" },
+      { id: "mat-2",   label: "待料中",   color: "bg-orange-600 text-orange-100 border-orange-400" },
+      { id: "mat-3",   label: "待正極片", color: "bg-amber-600 text-amber-100 border-amber-400" },
+      { id: "mat-4",   label: "待負極片", color: "bg-yellow-600 text-yellow-100 border-yellow-400" },
+      { id: "mat-5",   label: "待TRAY停機", color: "bg-rose-600 text-rose-100 border-rose-400" },
+      { id: "mat-6",   label: "備料中",   color: "bg-indigo-600 text-indigo-100 border-indigo-400" },
+      { id: "mat-7",   label: "物料異常", color: "bg-rose-700 text-rose-100 border-rose-400" }
     ];
 
     const COLOR_THEMES = [
@@ -235,8 +238,8 @@
       { label: "青藍色 (準備中)",   color: "bg-cyan-600 text-cyan-100 border-cyan-400", badge: "bg-cyan-400" },
       { label: "天藍色 (切換中)",   color: "bg-sky-600 text-sky-100 border-sky-400", badge: "bg-sky-400" },
       { label: "深藍色 (加工中)",   color: "bg-blue-600 text-blue-100 border-blue-400", badge: "bg-blue-400" },
-      { label: "靛藍色 (備料中)",   color: "bg-indigo-600 text-indigo-100 border-indigo-400", badge: "bg-indigo-400" },
-      { label: "紫色 (預定中)",     color: "bg-purple-600 text-purple-100 border-purple-400", badge: "bg-purple-400" },
+      { label: "靛藍色 (備料/P料號)", color: "bg-indigo-600 text-indigo-100 border-indigo-400", badge: "bg-indigo-400" },
+      { label: "紫色 (預定/M料號)",   color: "bg-purple-600 text-purple-100 border-purple-400", badge: "bg-purple-400" },
       { label: "粉紫色 (特殊狀態)", color: "bg-fuchsia-600 text-fuchsia-100 border-fuchsia-400", badge: "bg-fuchsia-400" },
       { label: "亮粉色 (提醒/關注)", color: "bg-pink-600 text-pink-100 border-pink-400", badge: "bg-pink-400" },
       { label: "鮮紅色 (異常/停機)", color: "bg-red-600 text-red-100 border-red-400", badge: "bg-red-400" },
@@ -253,8 +256,8 @@
       { id: "m-02", type: "", name: "QC", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-03", type: "", name: "極片搬運", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-04", type: "", name: "折彎機", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
-      { id: "m-06", type: "Kaido", name: "W32", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
-      { id: "m-07", type: "Kaido", name: "W33", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-06", type: "Kaido", name: "W32", operator: "", backup: "", mStatus: "正常運轉", matStatus: "P50B", note: "" },
+      { id: "m-07", type: "Kaido", name: "W33", operator: "", backup: "", mStatus: "正常運轉", matStatus: "M35A", note: "" },
       { id: "m-08", type: "Kaido", name: "W34", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-09", type: "Kaido", name: "W35", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-10", type: "Kaido", name: "W36", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
@@ -354,7 +357,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       });
 
       const [matStatusOptions, setMatStatusOptions] = useState(() => {
-        const saved = localStorage.getItem("mfg_board_matstatus_opt_v4");
+        const saved = localStorage.getItem("mfg_board_matstatus_opt_v5");
         return saved ? JSON.parse(saved) : DEFAULT_MATERIAL_STATUS_OPTIONS;
       });
 
@@ -381,6 +384,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [maintQueryDate, setMaintQueryDate] = useState(todayStr);
       const [maintQueryShift, setMaintQueryShift] = useState("ALL");
       const [maintQueryMachine, setMaintQueryMachine] = useState("ALL");
+      const [maintQueryMatStatus, setMaintQueryMatStatus] = useState("ALL"); // P/M 料況選單篩選
+      const [maintOnlyPM, setMaintOnlyPM] = useState(false); // 僅過濾 P/M 料號開關
       const [maintQueryKeyword, setMaintQueryKeyword] = useState("");
 
       const [squadRosters, setSquadRosters] = useState({
@@ -483,7 +488,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         localStorage.setItem("mfg_board_machines_v9", JSON.stringify(machines));
         localStorage.setItem("mfg_board_machine_types_v3", JSON.stringify(machineTypes));
         localStorage.setItem("mfg_board_mstatus_opt_v4", JSON.stringify(mStatusOptions));
-        localStorage.setItem("mfg_board_matstatus_opt_v4", JSON.stringify(matStatusOptions));
+        localStorage.setItem("mfg_board_matstatus_opt_v5", JSON.stringify(matStatusOptions));
         localStorage.setItem("mfg_board_skill_groups_v4", JSON.stringify(skillGroups));
         localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
         localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
@@ -959,11 +964,35 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         return `(${diff}分)`;
       };
 
-      // 跨班/跨機台維修記錄篩選計算 (自動過濾非機台項目)
+      // 提取僅以 P 或 M 開頭的料況選項
+      const pmMatStatusOptions = useMemo(() => {
+        const set = new Set();
+        // 加入預設選單中開頭為 P/M 的項目
+        matStatusOptions.forEach(o => {
+          if (o.label && /^[PMpm]/.test(o.label.trim())) {
+            set.add(o.label.trim());
+          }
+        });
+        // 加入目前所有機台設定中開頭為 P/M 的料況
+        machines.forEach(m => {
+          if (m.matStatus && /^[PMpm]/.test(m.matStatus.trim())) {
+            set.add(m.matStatus.trim());
+          }
+        });
+        // 加入歷史紀錄中開頭為 P/M 的料況
+        maintenanceLogs.forEach(l => {
+          if (l.matStatus && /^[PMpm]/.test(l.matStatus.trim())) {
+            set.add(l.matStatus.trim());
+          }
+        });
+        return Array.from(set);
+      }, [matStatusOptions, machines, maintenanceLogs]);
+
+      // 跨班/跨機台維修記錄篩選計算 (增強 P/M 料號關鍵字與選單比對)
       const queriedMaintLogs = useMemo(() => {
         return maintenanceLogs.filter(log => {
           if (!log.shiftKey) return false;
-          // 自動排除非機台項目
+          // 自動排除非機台項目 (領班、QC 等)
           if (EXCLUDED_QUERY_STATIONS.includes(log.machineName)) return false;
 
           const [lDate, lShift] = log.shiftKey.split('_');
@@ -972,16 +1001,33 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           if (maintQueryShift !== "ALL" && lShift !== maintQueryShift) return false;
           if (maintQueryMachine !== "ALL" && log.machineName !== maintQueryMachine) return false;
 
+          // 料況比對：優先取紀錄中的料況，若無則從當前機台補抓
+          const targetM = machines.find(m => m.name === log.machineName);
+          const logMat = (log.matStatus || (targetM ? targetM.matStatus : "") || "").trim();
+
+          // 1. 若開啟「僅過濾 P/M 料號」開關，料號必須以 P 或 M 開頭
+          if (maintOnlyPM && !/^[PMpm]/.test(logMat)) {
+            return false;
+          }
+
+          // 2. 特定的 P/M 料況選單篩選
+          if (maintQueryMatStatus !== "ALL" && logMat !== maintQueryMatStatus) {
+            return false;
+          }
+
+          // 3. 關鍵字搜尋 (包含料號、原因、備註與機台名稱)
           if (maintQueryKeyword.trim()) {
             const q = maintQueryKeyword.trim().toLowerCase();
             const matchIssue = log.issue && log.issue.toLowerCase().includes(q);
             const matchNote = log.note && log.note.toLowerCase().includes(q);
             const matchMachine = log.machineName && log.machineName.toLowerCase().includes(q);
-            if (!matchIssue && !matchNote && !matchMachine) return false;
+            const matchMat = logMat && logMat.toLowerCase().includes(q);
+            if (!matchIssue && !matchNote && !matchMachine && !matchMat) return false;
           }
+
           return true;
         });
-      }, [maintenanceLogs, maintQueryDate, maintQueryShift, maintQueryMachine, maintQueryKeyword]);
+      }, [maintenanceLogs, maintQueryDate, maintQueryShift, maintQueryMachine, maintQueryMatStatus, maintOnlyPM, maintQueryKeyword, machines]);
 
       const handleAddOrUpdateMaintLog = (e) => {
         e.preventDefault();
@@ -990,6 +1036,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           return;
         }
 
+        const targetMachineObj = machines.find(m => m.name === maintModal.machineName);
+        const currentMat = targetMachineObj ? targetMachineObj.matStatus : "";
+
         let updatedLogs = [];
         if (editingMaintId) {
           updatedLogs = maintenanceLogs.map(log => log.id === editingMaintId ? {
@@ -997,7 +1046,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             issue: newMaintForm.issue.trim(),
             startTime: newMaintForm.startTime,
             endTime: newMaintForm.endTime,
-            note: newMaintForm.note.trim()
+            note: newMaintForm.note.trim(),
+            matStatus: log.matStatus || currentMat
           } : log);
           showNotice("已更新維修保養紀錄！", "success");
         } else {
@@ -1009,6 +1059,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             startTime: newMaintForm.startTime || new Date().toTimeString().slice(0, 5),
             endTime: newMaintForm.endTime,
             note: newMaintForm.note.trim(),
+            matStatus: currentMat, // 保存建立維修紀錄時的機台料況
             createdAt: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
           };
           updatedLogs = [newLog, ...maintenanceLogs];
@@ -1644,6 +1695,8 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     setMaintQueryDate(selectedDate);
                     setMaintQueryShift("ALL");
                     setMaintQueryMachine("ALL");
+                    setMaintQueryMatStatus("ALL");
+                    setMaintOnlyPM(false);
                     setMaintQueryKeyword("");
                     setShowMaintQueryModal(true);
                   }}
@@ -2421,10 +2474,10 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
-          {/* 全區域跨班/跨機台維修記錄查詢 Modal (跳出新視窗) */}
+          {/* 全區域跨班/跨機台維修記錄查詢 Modal (新視窗) */}
           {showMaintQueryModal && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-4xl w-full p-5 shadow-2xl flex flex-col h-[85vh]">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-5xl w-full p-5 shadow-2xl flex flex-col h-[85vh]">
                 
                 {/* 標題欄 */}
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
@@ -2432,10 +2485,10 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     <span className="p-1.5 bg-amber-950 text-amber-400 border border-amber-800 rounded-lg text-base">🔧</span>
                     <div>
                       <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-                        每天/各班/各機台 維修保養記錄查詢
+                        每日/各班/各機台 維修保養記錄查詢
                       </h3>
                       <p className="text-[11px] text-slate-400">
-                        跨日期、班別與機台的綜合維修保養歷史紀錄查詢視窗
+                        支援 P/M 開頭料號精準與自動篩選 (如 P50B、M35A...)
                       </p>
                     </div>
                   </div>
@@ -2448,7 +2501,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 </div>
 
                 {/* 篩選工具列 */}
-                <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-lg my-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
+                <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-lg my-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 shrink-0">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-400 mb-1">📅 查詢日期</label>
                     <div className="flex items-center space-x-1">
@@ -2500,10 +2553,36 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">🔍 關鍵字搜尋</label>
+                    <label className="block text-[11px] font-semibold text-amber-300 mb-1">📦 P/M 料號選單篩選</label>
+                    <select
+                      value={maintQueryMatStatus}
+                      onChange={e => setMaintQueryMatStatus(e.target.value)}
+                      className="bg-slate-900 border border-amber-500/60 text-amber-200 text-xs px-2 py-1.5 rounded w-full focus:outline-none font-bold"
+                    >
+                      <option value="ALL">全部料況 (不限)</option>
+                      {pmMatStatusOptions.map(mat => (
+                        <option key={mat} value={mat}>🔍 {mat}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col justify-end">
+                    <label className="flex items-center space-x-1.5 cursor-pointer bg-amber-950/60 border border-amber-800 p-2 rounded text-amber-200 text-xs select-none">
+                      <input
+                        type="checkbox"
+                        checked={maintOnlyPM}
+                        onChange={e => setMaintOnlyPM(e.target.checked)}
+                        className="rounded border-amber-500 text-amber-500 focus:ring-amber-500 w-3.5 h-3.5 bg-slate-900"
+                      />
+                      <span className="font-bold">⚡ 僅顯示 P/M 料號</span>
+                    </label>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">🔍 關鍵字 (如: P50B)</label>
                     <input
                       type="text"
-                      placeholder="原因/備註/機台..."
+                      placeholder="關鍵字/P料號/M料號..."
                       value={maintQueryKeyword}
                       onChange={e => setMaintQueryKeyword(e.target.value)}
                       className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded w-full focus:outline-none focus:border-amber-500 placeholder-slate-500"
@@ -2523,11 +2602,13 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       setMaintQueryDate("");
                       setMaintQueryShift("ALL");
                       setMaintQueryMachine("ALL");
+                      setMaintQueryMatStatus("ALL");
+                      setMaintOnlyPM(false);
                       setMaintQueryKeyword("");
                     }}
                     className="text-amber-400 hover:underline text-[11px]"
                   >
-                    重置所有篩選
+                    重置所有篩選條件
                   </button>
                 </div>
 
@@ -2538,6 +2619,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       <tr>
                         <th className="p-2 font-semibold w-28">日期班別</th>
                         <th className="p-2 font-semibold w-20">機台</th>
+                        <th className="p-2 font-semibold w-24">料況 (P/M料號)</th>
                         <th className="p-2 font-semibold">異常原因 / 維修項目</th>
                         <th className="p-2 font-semibold w-28">維修時間</th>
                         <th className="p-2 font-semibold w-20">歷時</th>
@@ -2548,7 +2630,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     <tbody className="divide-y divide-slate-800/80">
                       {queriedMaintLogs.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="text-center py-12 text-slate-500">
+                          <td colSpan={8} className="text-center py-12 text-slate-500">
                             無符合條件之維修紀錄
                           </td>
                         </tr>
@@ -2557,6 +2639,8 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                           const [lDate, lShift] = (log.shiftKey || "_").split('_');
                           const isOngoing = !log.endTime;
                           const durationStr = getMaintDuration(log.startTime, log.endTime);
+                          const targetM = machines.find(m => m.name === log.machineName);
+                          const logMat = log.matStatus || (targetM ? targetM.matStatus : "");
 
                           return (
                             <tr key={log.id} className="hover:bg-slate-800/40 transition">
@@ -2566,6 +2650,19 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                               </td>
                               <td className="p-2 font-bold text-slate-100 whitespace-nowrap">
                                 {log.machineName}
+                              </td>
+                              <td className="p-2 font-mono text-[11px] whitespace-nowrap">
+                                {logMat ? (
+                                  <span className={`px-2 py-0.5 rounded font-bold border ${
+                                    /^[PMpm]/.test(logMat)
+                                      ? "bg-indigo-950 text-indigo-200 border-indigo-700"
+                                      : "bg-slate-800 text-slate-300 border-slate-700"
+                                  }`}>
+                                    {logMat}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600">-</span>
+                                )}
                               </td>
                               <td className="p-2 text-slate-200 font-medium">
                                 {log.issue}
@@ -3638,7 +3735,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-slate-400 mb-1 font-medium">初始機況</label>
+                        <label className="block text-slate-400 mb-1 font-medium font-semibold">初始機況</label>
                         <select
                           value={newMachine.mStatus}
                           onChange={e => setNewMachine({ ...newMachine, mStatus: e.target.value })}
@@ -3651,7 +3748,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       </div>
 
                       <div>
-                        <label className="block text-slate-400 mb-1 font-medium">初始料況</label>
+                        <label className="block text-slate-400 mb-1 font-medium font-semibold">初始料況</label>
                         <select
                           value={newMachine.matStatus}
                           onChange={e => setNewMachine({ ...newMachine, matStatus: e.target.value })}
