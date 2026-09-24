@@ -385,7 +385,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [maintQueryShift, setMaintQueryShift] = useState("ALL");
       const [maintQueryMachine, setMaintQueryMachine] = useState("ALL");
       const [maintQueryMatStatus, setMaintQueryMatStatus] = useState("ALL"); // P/M 料況選單篩選
-      const [maintOnlyPM, setMaintOnlyPM] = useState(false); // 僅過濾 P/M 料號開關
       const [maintQueryKeyword, setMaintQueryKeyword] = useState("");
 
       const [squadRosters, setSquadRosters] = useState({
@@ -967,19 +966,16 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       // 提取僅以 P 或 M 開頭的料況選項
       const pmMatStatusOptions = useMemo(() => {
         const set = new Set();
-        // 加入預設選單中開頭為 P/M 的項目
         matStatusOptions.forEach(o => {
           if (o.label && /^[PMpm]/.test(o.label.trim())) {
             set.add(o.label.trim());
           }
         });
-        // 加入目前所有機台設定中開頭為 P/M 的料況
         machines.forEach(m => {
           if (m.matStatus && /^[PMpm]/.test(m.matStatus.trim())) {
             set.add(m.matStatus.trim());
           }
         });
-        // 加入歷史紀錄中開頭為 P/M 的料況
         maintenanceLogs.forEach(l => {
           if (l.matStatus && /^[PMpm]/.test(l.matStatus.trim())) {
             set.add(l.matStatus.trim());
@@ -988,7 +984,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         return Array.from(set);
       }, [matStatusOptions, machines, maintenanceLogs]);
 
-      // 跨班/跨機台維修記錄篩選計算 (增強 P/M 料號關鍵字與選單比對)
+      // 跨班/跨機台維修記錄篩選計算
       const queriedMaintLogs = useMemo(() => {
         return maintenanceLogs.filter(log => {
           if (!log.shiftKey) return false;
@@ -1005,17 +1001,12 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           const targetM = machines.find(m => m.name === log.machineName);
           const logMat = (log.matStatus || (targetM ? targetM.matStatus : "") || "").trim();
 
-          // 1. 若開啟「僅過濾 P/M 料號」開關，料號必須以 P 或 M 開頭
-          if (maintOnlyPM && !/^[PMpm]/.test(logMat)) {
-            return false;
-          }
-
-          // 2. 特定的 P/M 料況選單篩選
+          // P/M 料況選單篩選
           if (maintQueryMatStatus !== "ALL" && logMat !== maintQueryMatStatus) {
             return false;
           }
 
-          // 3. 關鍵字搜尋 (包含料號、原因、備註與機台名稱)
+          // 關鍵字搜尋 (包含料號、原因、備註與機台名稱)
           if (maintQueryKeyword.trim()) {
             const q = maintQueryKeyword.trim().toLowerCase();
             const matchIssue = log.issue && log.issue.toLowerCase().includes(q);
@@ -1027,7 +1018,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
           return true;
         });
-      }, [maintenanceLogs, maintQueryDate, maintQueryShift, maintQueryMachine, maintQueryMatStatus, maintOnlyPM, maintQueryKeyword, machines]);
+      }, [maintenanceLogs, maintQueryDate, maintQueryShift, maintQueryMachine, maintQueryMatStatus, maintQueryKeyword, machines]);
 
       const handleAddOrUpdateMaintLog = (e) => {
         e.preventDefault();
@@ -1696,7 +1687,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     setMaintQueryShift("ALL");
                     setMaintQueryMachine("ALL");
                     setMaintQueryMatStatus("ALL");
-                    setMaintOnlyPM(false);
                     setMaintQueryKeyword("");
                     setShowMaintQueryModal(true);
                   }}
@@ -2500,8 +2490,8 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   </button>
                 </div>
 
-                {/* 篩選工具列 */}
-                <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-lg my-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 shrink-0">
+                {/* 篩選工具列 (已移除僅顯示P/M料號按鈕) */}
+                <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-lg my-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 shrink-0">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-400 mb-1">📅 查詢日期</label>
                     <div className="flex items-center space-x-1">
@@ -2566,18 +2556,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     </select>
                   </div>
 
-                  <div className="flex flex-col justify-end">
-                    <label className="flex items-center space-x-1.5 cursor-pointer bg-amber-950/60 border border-amber-800 p-2 rounded text-amber-200 text-xs select-none">
-                      <input
-                        type="checkbox"
-                        checked={maintOnlyPM}
-                        onChange={e => setMaintOnlyPM(e.target.checked)}
-                        className="rounded border-amber-500 text-amber-500 focus:ring-amber-500 w-3.5 h-3.5 bg-slate-900"
-                      />
-                      <span className="font-bold">⚡ 僅顯示 P/M 料號</span>
-                    </label>
-                  </div>
-
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-400 mb-1">🔍 關鍵字 (如: P50B)</label>
                     <input
@@ -2603,7 +2581,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       setMaintQueryShift("ALL");
                       setMaintQueryMachine("ALL");
                       setMaintQueryMatStatus("ALL");
-                      setMaintOnlyPM(false);
                       setMaintQueryKeyword("");
                     }}
                     className="text-amber-400 hover:underline text-[11px]"
@@ -3735,7 +3712,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-slate-400 mb-1 font-medium font-semibold">初始機況</label>
+                        <label className="block text-slate-400 mb-1 font-semibold">初始機況</label>
                         <select
                           value={newMachine.mStatus}
                           onChange={e => setNewMachine({ ...newMachine, mStatus: e.target.value })}
@@ -3748,7 +3725,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       </div>
 
                       <div>
-                        <label className="block text-slate-400 mb-1 font-medium font-semibold">初始料況</label>
+                        <label className="block text-slate-400 mb-1 font-semibold">初始料況</label>
                         <select
                           value={newMachine.matStatus}
                           onChange={e => setNewMachine({ ...newMachine, matStatus: e.target.value })}
