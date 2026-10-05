@@ -52,12 +52,15 @@
     const DEFAULT_SUPABASE_URL = "https://uczyrbaqojhcetqaqzcw.supabase.co";
     const DEFAULT_SUPABASE_KEY = "sb_publishable_rj4tdbDeW0i95WiDEqlcOQ_5ysQR8If";
 
-    // 假別標籤定義
+    // 假別標籤定義 (包含 忌、休、未、特、病、事、公、喪、OFF)
     const LEAVE_TAGS = ['特', '病', '事', '公', '喪', '未', '忌', '休', 'OFF', 'off'];
 
     const DEFAULT_MAINT_ISSUE_TAGS = [
       "極片卡料", "刀具磨損", "感應器異常", "氣壓不足", "換模換線保養", "電路故障", "馬達過熱", "定期保養"
     ];
+
+    // 維修紀錄查詢時排除非機台之工作站/職位名稱
+    const EXCLUDED_QUERY_STATIONS = ["領班", "QC", "極片搬運", "6S", "支援組裝"];
 
     const { useState, useEffect, useMemo, useRef } = React;
 
@@ -216,16 +219,17 @@
       { id: "ms-5", label: "換模換線", color: "bg-blue-600 text-blue-100 border-blue-400", badge: "bg-blue-400" }
     ];
 
+    // 預載包含 P/M 開頭料號範例 (如 P50B、M35A)
     const DEFAULT_MATERIAL_STATUS_OPTIONS = [
-      { id: "mat-1", label: "供料正常",     color: "bg-emerald-700 text-emerald-100 border-emerald-500" },
-      { id: "mat-2", label: "待料中",       color: "bg-orange-600 text-orange-100 border-orange-400" },
-      { id: "mat-3", label: "待正極片",     color: "bg-amber-600 text-amber-100 border-amber-400" },
-      { id: "mat-4", label: "待正極片停機", color: "bg-amber-700 text-amber-100 border-amber-500" },
-      { id: "mat-5", label: "待負極片",     color: "bg-yellow-600 text-yellow-100 border-yellow-400" },
-      { id: "mat-6", label: "待負極片停機", color: "bg-yellow-700 text-yellow-100 border-yellow-500" },
-      { id: "mat-7", label: "待TRAY停機",   color: "bg-rose-600 text-rose-100 border-rose-400" },
-      { id: "mat-8", label: "備料中",       color: "bg-indigo-600 text-indigo-100 border-indigo-400" },
-      { id: "mat-9", label: "物料異常",     color: "bg-rose-700 text-rose-100 border-rose-400" }
+      { id: "mat-pm1", label: "P50B",     color: "bg-indigo-700 text-indigo-100 border-indigo-500" },
+      { id: "mat-pm2", label: "M35A",     color: "bg-purple-700 text-purple-100 border-purple-500" },
+      { id: "mat-1",   label: "供料正常", color: "bg-emerald-700 text-emerald-100 border-emerald-500" },
+      { id: "mat-2",   label: "待料中",   color: "bg-orange-600 text-orange-100 border-orange-400" },
+      { id: "mat-3",   label: "待正極片", color: "bg-amber-600 text-amber-100 border-amber-400" },
+      { id: "mat-4",   label: "待負極片", color: "bg-yellow-600 text-yellow-100 border-yellow-400" },
+      { id: "mat-5",   label: "待TRAY停機", color: "bg-rose-600 text-rose-100 border-rose-400" },
+      { id: "mat-6",   label: "備料中",   color: "bg-indigo-600 text-indigo-100 border-indigo-400" },
+      { id: "mat-7",   label: "物料異常", color: "bg-rose-700 text-rose-100 border-rose-400" }
     ];
 
     const COLOR_THEMES = [
@@ -234,8 +238,8 @@
       { label: "青藍色 (準備中)",   color: "bg-cyan-600 text-cyan-100 border-cyan-400", badge: "bg-cyan-400" },
       { label: "天藍色 (切換中)",   color: "bg-sky-600 text-sky-100 border-sky-400", badge: "bg-sky-400" },
       { label: "深藍色 (加工中)",   color: "bg-blue-600 text-blue-100 border-blue-400", badge: "bg-blue-400" },
-      { label: "靛藍色 (備料中)",   color: "bg-indigo-600 text-indigo-100 border-indigo-400", badge: "bg-indigo-400" },
-      { label: "紫色 (預定中)",     color: "bg-purple-600 text-purple-100 border-purple-400", badge: "bg-purple-400" },
+      { label: "靛藍色 (備料/P料號)", color: "bg-indigo-600 text-indigo-100 border-indigo-400", badge: "bg-indigo-400" },
+      { label: "紫色 (預定/M料號)",   color: "bg-purple-600 text-purple-100 border-purple-400", badge: "bg-purple-400" },
       { label: "粉紫色 (特殊狀態)", color: "bg-fuchsia-600 text-fuchsia-100 border-fuchsia-400", badge: "bg-fuchsia-400" },
       { label: "亮粉色 (提醒/關注)", color: "bg-pink-600 text-pink-100 border-pink-400", badge: "bg-pink-400" },
       { label: "鮮紅色 (異常/停機)", color: "bg-red-600 text-red-100 border-red-400", badge: "bg-red-400" },
@@ -247,14 +251,13 @@
       { label: "暗夜黑 (停用/停產)", color: "bg-zinc-800 text-zinc-200 border-zinc-600", badge: "bg-zinc-500" }
     ];
 
-    // 新排列順序：通用 -> Kaido (W32~W39, W45) -> 先導 (W42~W44) -> 羅得B (W31, W40) -> 覆捲機 (RW05~RW19)
     const DEFAULT_MACHINES = [
       { id: "m-01", type: "", name: "領班", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-02", type: "", name: "QC", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-03", type: "", name: "極片搬運", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-04", type: "", name: "折彎機", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
-      { id: "m-06", type: "Kaido", name: "W32", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
-      { id: "m-07", type: "Kaido", name: "W33", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
+      { id: "m-06", type: "Kaido", name: "W32", operator: "", backup: "", mStatus: "正常運轉", matStatus: "P50B", note: "" },
+      { id: "m-07", type: "Kaido", name: "W33", operator: "", backup: "", mStatus: "正常運轉", matStatus: "M35A", note: "" },
       { id: "m-08", type: "Kaido", name: "W34", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-09", type: "Kaido", name: "W35", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
       { id: "m-10", type: "Kaido", name: "W36", operator: "", backup: "", mStatus: "正常運轉", matStatus: "", note: "" },
@@ -310,24 +313,10 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       return `${year}-${month}-${day}`;
     };
 
-    // 判斷料況是否屬於「待料停機」大類 (待料中/待正極片/待負極片/待TRAY停機/其他「待」開頭狀態)
-    const isWaitingMaterialStatus = (matStatus) => {
-      return !!matStatus && (
-        matStatus === "待料中" ||
-        matStatus === "待正極片" ||
-        matStatus === "待正極片停機" ||
-        matStatus === "待負極片" ||
-        matStatus === "待負極片停機" ||
-        matStatus === "待TRAY停機" ||
-        matStatus.startsWith("待")
-      );
-    };
-
     function App() {
       const todayStr = useMemo(() => getTodayStr(), []);
       const [selectedDate, setSelectedDate] = useState(todayStr);
 
-      // 06:30 ~ 18:30 自動預設載入「日班」，18:30 ~ 06:30 自動載入「夜班」
       const [selectedShiftTime, setSelectedShiftTime] = useState(() => {
         const now = new Date();
         const mins = now.getHours() * 60 + now.getMinutes();
@@ -368,7 +357,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       });
 
       const [matStatusOptions, setMatStatusOptions] = useState(() => {
-        const saved = localStorage.getItem("mfg_board_matstatus_opt_v4");
+        const saved = localStorage.getItem("mfg_board_matstatus_opt_v5");
         return saved ? JSON.parse(saved) : DEFAULT_MATERIAL_STATUS_OPTIONS;
       });
 
@@ -390,16 +379,13 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [newMaintForm, setNewMaintForm] = useState({ issue: "", startTime: "", endTime: "", note: "" });
       const [editingMaintId, setEditingMaintId] = useState(null);
 
-      // 全廠/跨班/每日維修紀錄大視窗查詢 State
+      // 全區域跨班/跨機台維修紀錄查詢彈出視窗 State
       const [showMaintQueryModal, setShowMaintQueryModal] = useState(false);
-      const [maintQueryFilters, setMaintQueryFilters] = useState({
-        machine: "ALL",
-        shiftTime: "ALL",
-        startDate: "",
-        endDate: "",
-        keyword: "",
-        status: "ALL"
-      });
+      const [maintQueryDate, setMaintQueryDate] = useState(todayStr);
+      const [maintQueryShift, setMaintQueryShift] = useState("ALL");
+      const [maintQueryMachine, setMaintQueryMachine] = useState("ALL");
+      const [maintQueryMatStatus, setMaintQueryMatStatus] = useState("ALL"); // P/M 料況選單篩選
+      const [maintQueryKeyword, setMaintQueryKeyword] = useState("");
 
       const [squadRosters, setSquadRosters] = useState({
         S1: INITIAL_OPERATORS_POOL_S1,
@@ -474,7 +460,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [pendingAction, setPendingAction] = useState(null);
       const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
 
-      // 管理員未儲存狀態計算 (檢視者免儲存提示)
       const isDirty = useMemo(() => {
         if (userRole !== 'admin') return false;
         if (!savedSnapshot) return false;
@@ -502,7 +487,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         localStorage.setItem("mfg_board_machines_v9", JSON.stringify(machines));
         localStorage.setItem("mfg_board_machine_types_v3", JSON.stringify(machineTypes));
         localStorage.setItem("mfg_board_mstatus_opt_v4", JSON.stringify(mStatusOptions));
-        localStorage.setItem("mfg_board_matstatus_opt_v4", JSON.stringify(matStatusOptions));
+        localStorage.setItem("mfg_board_matstatus_opt_v5", JSON.stringify(matStatusOptions));
         localStorage.setItem("mfg_board_skill_groups_v4", JSON.stringify(skillGroups));
         localStorage.setItem("mfg_board_attendance_v6", JSON.stringify(attendanceMap));
         localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
@@ -556,8 +541,6 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
-      // 全系統統一出勤判定函式
-      // 關鍵規則：當班人員班表不是 "日" 或 "夜" 即為請假 (預設不勾選)
       const isPersonPresent = (personName, isDuty) => {
         if (attendanceMap[personName] !== undefined) {
           return !!attendanceMap[personName];
@@ -568,8 +551,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         if (!itemObj) return false;
         const sVal = itemObj.schedShift;
         if (isDuty) {
-          // 當班人員：班表不是 "日" 且不是 "夜" 就是請假 (預設不出席)
-          return (sVal === '日' || sVal === '夜');
+          return sVal ? !LEAVE_TAGS.includes(sVal) : true;
         } else {
           return sVal === 'G';
         }
@@ -634,6 +616,10 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 if (cloudState.schedulesMap) setSchedulesMap(cloudState.schedulesMap);
                 if (cloudState.maintenanceLogs) setMaintenanceLogs(cloudState.maintenanceLogs);
                 if (cloudState.maintIssueTags) setMaintIssueTags(cloudState.maintIssueTags);
+                if (cloudState.adminPassword) {
+                  setAdminPassword(cloudState.adminPassword);
+                  localStorage.setItem("mfg_board_admin_pw_v3", cloudState.adminPassword);
+                }
 
                 const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
                 const shiftData = cloudState.schedulesMap && cloudState.schedulesMap[shiftKey];
@@ -644,9 +630,11 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 }
               }
               setSupabaseConnected(true);
+              setSupabaseErrorMsg("");
             } catch(e) {
+              console.error("Supabase 初始資料讀取失敗：", e);
               setSupabaseConnected(false);
-              setSupabaseErrorMsg((e && e.message) || "無法連線至 Supabase");
+              setSupabaseErrorMsg((e && (e.message || e.hint || e.details)) || "無法連線至 Supabase");
             }
           };
 
@@ -660,8 +648,16 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                     const remote = payload.new.data;
                     if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
                     if (remote.maintIssueTags) setMaintIssueTags(remote.maintIssueTags);
+                    if (remote.machineTypes) setMachineTypes(remote.machineTypes);
+                    if (remote.skillGroups) setSkillGroups(remote.skillGroups);
+                    if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
+                    if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
                     if (remote.maintenanceLogs) setMaintenanceLogs(remote.maintenanceLogs);
-                    
+                    if (remote.adminPassword && remote.adminPassword !== adminPassword) {
+                      setAdminPassword(remote.adminPassword);
+                      localStorage.setItem("mfg_board_admin_pw_v3", remote.adminPassword);
+                    }
+
                     if (!isDirtyRef.current) {
                       const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
                       const shiftData = remote.schedulesMap && remote.schedulesMap[shiftKey];
@@ -676,6 +672,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
               channel.subscribe((status) => {
                 setRealtimeMode(status === 'SUBSCRIBED' ? "WebSocket 實時" : "HTTP 輪詢");
+                if (status === 'SUBSCRIBED') {
+                  setSupabaseConnected(true);
+                }
               });
             } catch(wsErr) {
               setRealtimeMode("HTTP 輪詢");
@@ -690,8 +689,16 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 const remote = data.data;
                 if (remote.schedulesMap) setSchedulesMap(remote.schedulesMap);
                 if (remote.maintIssueTags) setMaintIssueTags(remote.maintIssueTags);
+                if (remote.machineTypes) setMachineTypes(remote.machineTypes);
+                if (remote.skillGroups) setSkillGroups(remote.skillGroups);
+                if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
+                if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
                 if (remote.maintenanceLogs) setMaintenanceLogs(remote.maintenanceLogs);
-                
+                if (remote.adminPassword && remote.adminPassword !== adminPassword) {
+                  setAdminPassword(remote.adminPassword);
+                  localStorage.setItem("mfg_board_admin_pw_v3", remote.adminPassword);
+                }
+
                 if (!isDirtyRef.current) {
                   const shiftKey = `${selectedDateRef.current}_${selectedShiftTimeRef.current}`;
                   const shiftData = remote.schedulesMap && remote.schedulesMap[shiftKey];
@@ -703,7 +710,14 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 }
               }
               setSupabaseConnected(true);
-            } catch(pollErr) {}
+              setSupabaseErrorMsg("");
+            } catch(pollErr) {
+              if (pollErr && pollErr.code !== 'PGRST116') {
+                console.error("輪詢 Supabase 失敗：", pollErr);
+                setSupabaseConnected(false);
+                setSupabaseErrorMsg((pollErr && pollErr.message) || "輪詢雲端資料失敗");
+              }
+            }
           }, 6000);
 
           return () => {
@@ -712,6 +726,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           };
         } catch(err) {
           setSupabaseConnected(false);
+          setSupabaseErrorMsg((err && err.message) || "初始化 Supabase 用戶端失敗");
         }
       }, [supabaseUrl, supabaseKey]);
 
@@ -746,8 +761,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           const freshAttendance = {};
           categorizedPersonnel.duty.forEach(item => {
             const sVal = item.schedShift;
-            // 當班人員：班表不是 "日" 且不是 "夜" 就是請假
-            const isLeave = (sVal !== '日' && sVal !== '夜');
+            const isLeave = sVal ? LEAVE_TAGS.includes(sVal) : false;
             freshAttendance[item.name] = !isLeave;
           });
 
@@ -761,14 +775,19 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         }
       }, [selectedDate, selectedShiftTime, scheduledShifts, categorizedPersonnel]);
 
-      const pushToSupabase = async (updatedFields) => {
+      const pushToSupabase = async (updatedFields = {}, options = {}) => {
         if (!supabaseRef.current) return;
+        const { silent = true } = options;
         try {
+          const effectiveMachines = updatedFields.machines !== undefined ? updatedFields.machines : machines;
+          const effectiveAttendance = updatedFields.attendanceMap !== undefined ? updatedFields.attendanceMap : attendanceMap;
+          const effectiveShift = updatedFields.currentShift !== undefined ? updatedFields.currentShift : currentShift;
+
           const shiftKey = `${selectedDate}_${selectedShiftTime}`;
           const currentShiftSnap = {
-            machines,
-            attendanceMap,
-            currentShift
+            machines: effectiveMachines,
+            attendanceMap: effectiveAttendance,
+            currentShift: effectiveShift
           };
 
           const newSchedulesMap = {
@@ -778,9 +797,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           };
 
           const payloadState = {
-            machines,
-            currentShift,
-            attendanceMap,
+            machines: effectiveMachines,
+            currentShift: effectiveShift,
+            attendanceMap: effectiveAttendance,
             machineTypes,
             skillGroups,
             mStatusOptions,
@@ -788,7 +807,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             schedulesMap: newSchedulesMap,
             maintenanceLogs,
             maintIssueTags,
-            ...updatedFields
+            adminPassword,
+            ...updatedFields,
+            schedulesMap: newSchedulesMap
           };
 
           const { error } = await supabaseRef.current.from('mfg_board').upsert({
@@ -799,16 +820,22 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
           if (error) throw error;
           setSchedulesMap(newSchedulesMap);
-          setSavedSnapshot({ machines, attendanceMap });
+          setSavedSnapshot({ machines: effectiveMachines, attendanceMap: effectiveAttendance });
           setSupabaseConnected(true);
-          showNotice("已成功儲存看板變更至 Supabase 雲端！", "success");
+          setSupabaseErrorMsg("");
+          if (!silent) {
+            showNotice("已成功儲存看板變更至 Supabase 雲端！", "success");
+          }
         } catch(err) {
-          showNotice("⚠ 雲端儲存失敗，資料僅保留在本機", "error");
+          console.error("寫入 Supabase 失敗：", err);
+          setSupabaseConnected(false);
+          setSupabaseErrorMsg((err && (err.message || err.hint || err.details)) || "寫入 Supabase 失敗");
+          showNotice("⚠️ 雲端同步失敗，此變更僅保留在本機，請檢查網路或 Supabase 設定", "error");
         }
       };
 
       const handleSaveBoard = () => {
-        pushToSupabase({});
+        pushToSupabase({}, { silent: false });
       };
 
       const performShiftChange = (targetDate, targetShiftTime) => {
@@ -832,7 +859,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const handleConfirmUnsavedPrompt = async (shouldSave) => {
         setShowUnsavedPrompt(false);
         if (shouldSave) {
-          await pushToSupabase({});
+          await pushToSupabase({}, { silent: false });
         }
 
         if (pendingAction) {
@@ -889,6 +916,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         }
         setAdminPassword(pwForm.newPw);
         localStorage.setItem("mfg_board_admin_pw_v3", pwForm.newPw);
+        pushToSupabase({ adminPassword: pwForm.newPw });
         setShowChangePwModal(false);
         setPwForm({ oldPw: "", newPw: "", confirmPw: "" });
         setPwError("");
@@ -906,6 +934,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         updated.splice(toIndex, 0, moved);
 
         setMachines(updated);
+        pushToSupabase({ machines: updated });
         showNotice(`已調整機台 [${moved.name}] 之順序`, "info");
       };
 
@@ -918,12 +947,13 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const [moved] = updated.splice(idx, 1);
         updated.splice(targetIdx, 0, moved);
         setMachines(updated);
+        pushToSupabase({ machines: updated });
       };
 
       const currentShiftKey = `${selectedDate}_${selectedShiftTime}`;
 
-      // 計算維修分鐘數
-      const calculateMaintMinutes = (start, end) => {
+      // 計算單筆維修分鐘數
+      const getMaintDurationMinutes = (start, end) => {
         if (!start || !end) return 0;
         const [sh, sm] = start.split(":").map(Number);
         const [eh, em] = end.split(":").map(Number);
@@ -934,62 +964,81 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       };
 
       const getMaintDuration = (start, end) => {
-        const diff = calculateMaintMinutes(start, end);
+        const diff = getMaintDurationMinutes(start, end);
         return diff > 0 ? `(${diff}分)` : "";
       };
 
-      // 篩選跨班全廠維修紀錄
-      const filteredQueryLogs = useMemo(() => {
+      // 提取僅以 P 或 M 開頭的料況選項
+      const pmMatStatusOptions = useMemo(() => {
+        const set = new Set();
+        matStatusOptions.forEach(o => {
+          if (o.label && /^[PMpm]/.test(o.label.trim())) {
+            set.add(o.label.trim());
+          }
+        });
+        machines.forEach(m => {
+          if (m.matStatus && /^[PMpm]/.test(m.matStatus.trim())) {
+            set.add(m.matStatus.trim());
+          }
+        });
+        maintenanceLogs.forEach(l => {
+          if (l.matStatus && /^[PMpm]/.test(l.matStatus.trim())) {
+            set.add(l.matStatus.trim());
+          }
+        });
+        return Array.from(set);
+      }, [matStatusOptions, machines, maintenanceLogs]);
+
+      // 跨班/跨機台維修記錄篩選計算
+      const queriedMaintLogs = useMemo(() => {
         return maintenanceLogs.filter(log => {
-          const shiftKeyParts = (log.shiftKey || "").split("_");
-          const logDate = shiftKeyParts[0] || "";
-          const logShift = shiftKeyParts[1] || "";
+          if (!log.shiftKey) return false;
+          // 自動排除非機台項目 (領班、QC 等)
+          if (EXCLUDED_QUERY_STATIONS.includes(log.machineName)) return false;
 
-          if (maintQueryFilters.machine !== "ALL" && log.machineName !== maintQueryFilters.machine) return false;
-          if (maintQueryFilters.shiftTime !== "ALL" && logShift !== maintQueryFilters.shiftTime) return false;
-          if (maintQueryFilters.startDate && logDate < maintQueryFilters.startDate) return false;
-          if (maintQueryFilters.endDate && logDate > maintQueryFilters.endDate) return false;
+          const [lDate, lShift] = log.shiftKey.split('_');
 
-          const isOngoing = !log.endTime;
-          if (maintQueryFilters.status === "ONGOING" && !isOngoing) return false;
-          if (maintQueryFilters.status === "COMPLETED" && isOngoing) return false;
+          if (maintQueryDate && lDate !== maintQueryDate) return false;
+          if (maintQueryShift !== "ALL" && lShift !== maintQueryShift) return false;
+          if (maintQueryMachine !== "ALL" && log.machineName !== maintQueryMachine) return false;
 
-          if (maintQueryFilters.keyword.trim()) {
-            const kw = maintQueryFilters.keyword.trim().toLowerCase();
-            const matchIssue = log.issue && log.issue.toLowerCase().includes(kw);
-            const matchNote = log.note && log.note.toLowerCase().includes(kw);
-            const matchMachine = log.machineName && log.machineName.toLowerCase().includes(kw);
-            if (!matchIssue && !matchNote && !matchMachine) return false;
+          // 料況比對：優先取紀錄中的料況，若無則從當前機台補抓
+          const targetM = machines.find(m => m.name === log.machineName);
+          const logMat = (log.matStatus || (targetM ? targetM.matStatus : "") || "").trim();
+
+          // P/M 料況選單篩選
+          if (maintQueryMatStatus !== "ALL" && logMat !== maintQueryMatStatus) {
+            return false;
+          }
+
+          // 關鍵字搜尋 (包含料號、原因、備註與機台名稱)
+          if (maintQueryKeyword.trim()) {
+            const q = maintQueryKeyword.trim().toLowerCase();
+            const matchIssue = log.issue && log.issue.toLowerCase().includes(q);
+            const matchNote = log.note && log.note.toLowerCase().includes(q);
+            const matchMachine = log.machineName && log.machineName.toLowerCase().includes(q);
+            const matchMat = logMat && logMat.toLowerCase().includes(q);
+            if (!matchIssue && !matchNote && !matchMachine && !matchMat) return false;
           }
 
           return true;
         });
-      }, [maintenanceLogs, maintQueryFilters]);
+      }, [maintenanceLogs, maintQueryDate, maintQueryShift, maintQueryMachine, maintQueryMatStatus, maintQueryKeyword, machines]);
 
-      const queryMetrics = useMemo(() => {
-        let totalMinutes = 0;
-        let ongoingCount = 0;
-        let completedCount = 0;
+      // 計算查詢結果的總維修分鐘數與時數顯示
+      const totalQueryMaintMinutes = useMemo(() => {
+        return queriedMaintLogs.reduce((sum, log) => {
+          return sum + getMaintDurationMinutes(log.startTime, log.endTime);
+        }, 0);
+      }, [queriedMaintLogs]);
 
-        filteredQueryLogs.forEach(log => {
-          if (!log.endTime) {
-            ongoingCount++;
-          } else {
-            completedCount++;
-            totalMinutes += calculateMaintMinutes(log.startTime, log.endTime);
-          }
-        });
-
-        const totalHours = (totalMinutes / 60).toFixed(1);
-
-        return {
-          total: filteredQueryLogs.length,
-          ongoing: ongoingCount,
-          completed: completedCount,
-          totalMinutes,
-          totalHours
-        };
-      }, [filteredQueryLogs]);
+      const formatTotalHoursStr = (totalMins) => {
+        const hoursDecimal = (totalMins / 60).toFixed(1);
+        const h = Math.floor(totalMins / 60);
+        const m = totalMins % 60;
+        if (h === 0) return `${m} 分鐘`;
+        return `${h} 小時 ${m} 分 (${hoursDecimal} 小時)`;
+      };
 
       const handleAddOrUpdateMaintLog = (e) => {
         e.preventDefault();
@@ -998,6 +1047,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           return;
         }
 
+        const targetMachineObj = machines.find(m => m.name === maintModal.machineName);
+        const currentMat = targetMachineObj ? targetMachineObj.matStatus : "";
+
         let updatedLogs = [];
         if (editingMaintId) {
           updatedLogs = maintenanceLogs.map(log => log.id === editingMaintId ? {
@@ -1005,7 +1057,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             issue: newMaintForm.issue.trim(),
             startTime: newMaintForm.startTime,
             endTime: newMaintForm.endTime,
-            note: newMaintForm.note.trim()
+            note: newMaintForm.note.trim(),
+            matStatus: log.matStatus || currentMat
           } : log);
           showNotice("已更新維修保養紀錄！", "success");
         } else {
@@ -1017,6 +1070,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             startTime: newMaintForm.startTime || new Date().toTimeString().slice(0, 5),
             endTime: newMaintForm.endTime,
             note: newMaintForm.note.trim(),
+            matStatus: currentMat, // 保存建立維修紀錄時的機台料況
             createdAt: new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
           };
           updatedLogs = [newLog, ...maintenanceLogs];
@@ -1099,6 +1153,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const updated = [...validList, newG];
         setSkillGroups(updated);
         setSelectedGroupId(newG.id);
+        pushToSupabase({ skillGroups: updated });
         showNotice("已建立新分組，請設定涵蓋機台與人員", "info");
       };
 
@@ -1106,6 +1161,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const validList = Array.isArray(skillGroups) && skillGroups.length > 0 ? skillGroups : DEFAULT_SKILL_GROUPS;
         const updated = validList.map(g => g.id === id ? { ...g, name: newName } : g);
         setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
       };
 
       const handleToggleMachineInGroup = (groupId, machineName) => {
@@ -1118,6 +1174,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           return { ...g, machines: next };
         });
         setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
       };
 
       const handleToggleMemberInGroup = (groupId, personName) => {
@@ -1130,6 +1187,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           return { ...g, members: next };
         });
         setSkillGroups(updated);
+        pushToSupabase({ skillGroups: updated });
       };
 
       const handleDeleteGroup = (groupId) => {
@@ -1143,6 +1201,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             const updated = validList.filter(g => g.id !== groupId);
             setSkillGroups(updated);
             if (selectedGroupId === groupId) setSelectedGroupId(null);
+            pushToSupabase({ skillGroups: updated });
             showNotice(`已刪除分組 [${targetG ? targetG.name : ''}]`, "info");
           }
         });
@@ -1152,16 +1211,16 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         setConfirmDialog({
           open: true,
           title: "重置看板確認",
-          message: "確定要重置看板嗎？所有機台的「操作員」與「預備員」將清空，且「機況」恢復為「正常運轉」（「料況」將保留不變）。",
+          message: "確定要重置看板嗎？所有機台的「操作員」與「預備員」將清空，「機況」與「料況」皆將保留不變。",
           onConfirm: () => {
             const updated = machines.map(m => ({
               ...m,
               operator: "",
-              backup: "",
-              mStatus: "正常運轉"
+              backup: ""
             }));
             setMachines(updated);
-            showNotice("看板已重置！操作員與預備員已清空，機況已恢復為正常運轉，料況完整保留。", "success");
+            pushToSupabase({ machines: updated });
+            showNotice("看板已重置！操作員與預備員已清空，機況與料況完整保留。", "success");
           }
         });
       };
@@ -1176,65 +1235,65 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       }, [machines]);
 
       const toggleAttendance = (name, isDuty) => {
-        setAttendanceMap(prev => {
-          const current = isPersonPresent(name, isDuty);
-          const nextVal = !current;
+        const current = isPersonPresent(name, isDuty);
+        const nextVal = !current;
+        const nextAttendance = { ...attendanceMap, [name]: nextVal };
 
-          if (!nextVal) {
-            setMachines(prevM => prevM.map(m => {
-              let updated = { ...m };
-              if (updated.operator === name) updated.operator = "";
-              if (updated.backup === name) updated.backup = "";
-              return updated;
-            }));
-          }
+        let updatedMachines = machines;
+        if (!nextVal) {
+          updatedMachines = machines.map(m => {
+            let updated = { ...m };
+            if (updated.operator === name) updated.operator = "";
+            if (updated.backup === name) updated.backup = "";
+            return updated;
+          });
+          setMachines(updatedMachines);
+        }
 
-          return { ...prev, [name]: nextVal };
-        });
+        setAttendanceMap(nextAttendance);
+        pushToSupabase({ attendanceMap: nextAttendance, machines: updatedMachines });
       };
 
       const selectAllDuty = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          currentDutyPool.forEach(p => { next[p] = true; });
-          return next;
-        });
+        const next = { ...attendanceMap };
+        currentDutyPool.forEach(p => { next[p] = true; });
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next });
       };
 
       const deselectAllDuty = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          currentDutyPool.forEach(p => { next[p] = false; });
-          setMachines(prevM => prevM.map(m => {
-            let updated = { ...m };
-            if (currentDutyPool.includes(updated.operator)) updated.operator = "";
-            if (currentDutyPool.includes(updated.backup)) updated.backup = "";
-            return updated;
-          }));
-          return next;
+        const next = { ...attendanceMap };
+        currentDutyPool.forEach(p => { next[p] = false; });
+        const updatedMachines = machines.map(m => {
+          let updated = { ...m };
+          if (currentDutyPool.includes(updated.operator)) updated.operator = "";
+          if (currentDutyPool.includes(updated.backup)) updated.backup = "";
+          return updated;
         });
+        setMachines(updatedMachines);
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next, machines: updatedMachines });
       };
 
       const selectAllSupport = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          currentSupportPool.forEach(p => { next[p] = true; });
-          return next;
-        });
+        const next = { ...attendanceMap };
+        currentSupportPool.forEach(p => { next[p] = true; });
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next });
       };
 
       const deselectAllSupport = () => {
-        setAttendanceMap(prev => {
-          const next = { ...prev };
-          currentSupportPool.forEach(p => { next[p] = false; });
-          setMachines(prevM => prevM.map(m => {
-            let updated = { ...m };
-            if (currentSupportPool.includes(updated.operator)) updated.operator = "";
-            if (currentSupportPool.includes(updated.backup)) updated.backup = "";
-            return updated;
-          }));
-          return next;
+        const next = { ...attendanceMap };
+        currentSupportPool.forEach(p => { next[p] = false; });
+        const updatedMachines = machines.map(m => {
+          let updated = { ...m };
+          if (currentSupportPool.includes(updated.operator)) updated.operator = "";
+          if (currentSupportPool.includes(updated.backup)) updated.backup = "";
+          return updated;
         });
+        setMachines(updatedMachines);
+        setAttendanceMap(next);
+        pushToSupabase({ attendanceMap: next, machines: updatedMachines });
       };
 
       const dutyCheckedCount = useMemo(() => {
@@ -1263,7 +1322,14 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const down = machines.filter(m => m.mStatus === "設備異常" && isCountedMachine(m)).length;
         const maint = machines.filter(m => m.mStatus === "停機保養" && isCountedMachine(m)).length;
         
-        const waitingMaterial = machines.filter(m => isWaitingMaterialStatus(m.matStatus) && isCountedMachine(m)).length;
+        const isWaitingMaterial = m => m.matStatus && (
+          m.matStatus === "待料中" || 
+          m.matStatus === "待正極片" || 
+          m.matStatus === "待負極片" || 
+          m.matStatus === "待TRAY停機" || 
+          m.matStatus.startsWith("待")
+        );
+        const waitingMaterial = machines.filter(m => isWaitingMaterial(m) && isCountedMachine(m)).length;
 
         return { expectedCount, dutyActualCount, actualCount, overtimeCount, running, down, maint, waitingMaterial };
       }, [categorizedPersonnel.duty, dutyCheckedCount, supportCheckedCount, machines]);
@@ -1289,9 +1355,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             ? true 
             : filterMatStatus === "UNSET" 
               ? !m.matStatus 
-              : filterMatStatus === "WAITING"
-                ? isWaitingMaterialStatus(m.matStatus)
-                : m.matStatus === filterMatStatus;
+              : m.matStatus === filterMatStatus;
           const matchSearch = !query || 
             m.name.toLowerCase().includes(query) ||
             (m.type && m.type.toLowerCase().includes(query)) ||
@@ -1321,6 +1385,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           return m;
         });
         setMachines(updated);
+        pushToSupabase({ machines: updated });
         showNotice("已移除該欄位指派人員", "info");
       };
 
@@ -1344,6 +1409,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         });
 
         setMachines(updated);
+        pushToSupabase({ machines: updated });
         setAssignModal({ open: false, machineId: null, role: null });
         showNotice(`已指派 [${personName}] 至 ${group ? group.name : targetM?.name}`, "success");
       };
@@ -1354,6 +1420,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
         const updated = machines.map(m => m.id === machineId ? { ...m, [type]: val } : m);
         setMachines(updated);
+        pushToSupabase({ machines: updated });
         setStatusModal({ open: false, machineId: null, type: null });
         setIsManagingStatuses(false);
         showNotice("狀態更動完成", "info");
@@ -1370,9 +1437,13 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         };
 
         if (type === "mStatus") {
-          setMStatusOptions([...mStatusOptions, newOpt]);
+          const updated = [...mStatusOptions, newOpt];
+          setMStatusOptions(updated);
+          pushToSupabase({ mStatusOptions: updated });
         } else {
-          setMatStatusOptions([...matStatusOptions, newOpt]);
+          const updated = [...matStatusOptions, newOpt];
+          setMatStatusOptions(updated);
+          pushToSupabase({ matStatusOptions: updated });
         }
 
         setNewStatusForm({ label: "", colorIndex: 0 });
@@ -1382,9 +1453,13 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const handleSaveEditedStatusLabel = (type, id) => {
         if (!editingStatusLabel.trim()) return;
         if (type === "mStatus") {
-          setMStatusOptions(mStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o));
+          const updated = mStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o);
+          setMStatusOptions(updated);
+          pushToSupabase({ mStatusOptions: updated });
         } else {
-          setMatStatusOptions(matStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o));
+          const updated = matStatusOptions.map(o => o.id === id ? { ...o, label: editingStatusLabel.trim() } : o);
+          setMatStatusOptions(updated);
+          pushToSupabase({ matStatusOptions: updated });
         }
         setEditingStatusId(null);
         setEditingStatusLabel("");
@@ -1398,9 +1473,13 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           message: `確定要刪除「${label}」狀態選項嗎？`,
           onConfirm: () => {
             if (type === "mStatus") {
-              setMStatusOptions(mStatusOptions.filter(o => o.id !== id));
+              const updated = mStatusOptions.filter(o => o.id !== id);
+              setMStatusOptions(updated);
+              pushToSupabase({ mStatusOptions: updated });
             } else {
-              setMatStatusOptions(matStatusOptions.filter(o => o.id !== id));
+              const updated = matStatusOptions.filter(o => o.id !== id);
+              setMatStatusOptions(updated);
+              pushToSupabase({ matStatusOptions: updated });
             }
             showNotice(`已刪除狀態選項 [${label}]`, "info");
           }
@@ -1474,7 +1553,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
           matStatus: newMachine.matStatus || "",
           note: ""
         };
-        setMachines([...machines, newM]);
+        const updated = [...machines, newM];
+        setMachines(updated);
+        pushToSupabase({ machines: updated });
         setNewMachine({ type: machineTypes[0] || "", name: "", operator: "", backup: "", mStatus: "正常運轉", matStatus: "" });
         setShowAddModal(false);
         showNotice(`已成功新增機台 [${newM.name}]`, "success");
@@ -1492,11 +1573,14 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 <p className="text-xs text-slate-400">
                   GitHub & Supabase 雲端實時同步系統
                 </p>
-                {!supabaseConnected && supabaseErrorMsg && (
-                  <p className="text-[11px] text-amber-400 bg-amber-950/60 border border-amber-800 rounded px-2 py-1 mt-1">
-                    ⚠️ 雲端連線狀態：{supabaseErrorMsg}
-                  </p>
-                )}
+                <div className={`text-[11px] rounded px-2 py-1 mt-1 inline-flex items-center gap-1 border ${
+                  supabaseConnected
+                    ? "text-emerald-300 bg-emerald-950/60 border-emerald-800"
+                    : "text-amber-400 bg-amber-950/60 border-amber-800"
+                }`}>
+                  <IconCloud />
+                  {supabaseConnected ? "雲端已連線" : `雲端未連線${supabaseErrorMsg ? `：${supabaseErrorMsg}` : ""}`}
+                </div>
               </div>
 
               <div className="space-y-4 pt-2">
@@ -1560,8 +1644,15 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 </form>
               </div>
 
-              <div className="text-center text-[11px] text-slate-500 pt-2 border-t border-slate-800">
-                預設管理員密碼：<code className="text-blue-400 font-mono">0000</code>
+              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800">
+                <span>預設管理員密碼：<code className="text-blue-400 font-mono">0000</code></span>
+                <button
+                  type="button"
+                  onClick={() => setShowSupabaseModal(true)}
+                  className="text-blue-400 hover:underline flex items-center"
+                >
+                  <IconCloud /> 雲端連線狀態
+                </button>
               </div>
 
             </div>
@@ -1587,6 +1678,17 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     }`}>
                       {userRole === 'admin' ? '🔑 管理員權限' : '👁️ 檢視者模式'}
                     </span>
+                    <button
+                      onClick={() => setShowSupabaseModal(true)}
+                      className={`text-[10px] border px-2 py-0.5 rounded-full font-normal transition flex items-center ${
+                        supabaseConnected 
+                          ? 'bg-emerald-950 text-emerald-300 border-emerald-700 hover:bg-emerald-900' 
+                          : 'bg-amber-950 text-amber-300 border-amber-700 hover:bg-amber-900'
+                      }`}
+                      title={supabaseConnected ? `雲端連線 (${realtimeMode})` : (supabaseErrorMsg || "雲端未連線")}
+                    >
+                      <IconCloud /> {supabaseConnected ? `雲端連線 (${realtimeMode})` : "單機模式 (未連線)"}
+                    </button>
                   </h1>
                 </div>
 
@@ -1598,13 +1700,20 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               {/* Action Buttons */}
               <div className="flex items-center flex-wrap gap-2 w-full md:w-auto justify-end">
                 
-                {/* 跨班與歷史維修紀錄大視窗查詢按鈕 */}
+                {/* 跨班/跨機台維修紀錄查詢按鈕 (全權限與檢視者皆可存取) */}
                 <button 
-                  onClick={() => setShowMaintQueryModal(true)}
+                  onClick={() => {
+                    setMaintQueryDate(selectedDate);
+                    setMaintQueryShift("ALL");
+                    setMaintQueryMachine("ALL");
+                    setMaintQueryMatStatus("ALL");
+                    setMaintQueryKeyword("");
+                    setShowMaintQueryModal(true);
+                  }}
                   className="bg-amber-700 hover:bg-amber-600 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition shadow"
-                  title="開啟跨班別與每日全廠維修保養紀錄查詢視窗"
+                  title="開啓全區跨班/跨機台維修紀錄查詢"
                 >
-                  🛠️️ 維修紀錄查詢
+                  🔍 維修紀錄查詢
                 </button>
 
                 {userRole === 'admin' && (
@@ -1616,9 +1725,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                           ? "bg-amber-500 hover:bg-amber-400 text-slate-950 animate-pulse shadow-amber-500/30"
                           : "bg-emerald-700 hover:bg-emerald-600 text-white"
                       }`}
-                      title="儲存目前班別之點名與派工資訊至雲端"
+                      title="所有變更已即時自動同步；此按鈕可再次手動強制儲存一次目前狀態"
                     >
-                      💾 儲存看板 {isDirty ? "(未儲存)" : ""}
+                      💾 儲存看板 {isDirty ? "(尚未同步)" : ""}
                     </button>
 
                     <button 
@@ -1780,7 +1889,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {/* Metric Summary Cards */}
+            {/* Metrics Counter Bar */}
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
               <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-lg shadow-sm">
                 <div className="text-xs text-purple-400 font-medium">應到人數 ({categorizedPersonnel.dutySquad})</div>
@@ -1815,7 +1924,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
-            {/* Attendance Roll Call Table */}
+            {/* On-site Roll Call Table */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
                 <div className="flex items-center space-x-2">
@@ -1823,7 +1932,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                   <h2 className="text-xs font-bold text-slate-200 flex items-center gap-2">
                     📋 現場出勤點名表
                     <span className="text-[11px] font-normal text-slate-400">
-                      ({selectedDate} {selectedShiftTime}班 - 當班非「日/夜」即判定請假；支援人員排 G 加班預設勾選)
+                      ({selectedDate} {selectedShiftTime}班 - 當班請假則不勾選；支援人員排 G 加班預設勾選)
                     </span>
                   </h2>
                 </div>
@@ -1855,8 +1964,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     {categorizedPersonnel.duty.map(item => {
                       const name = item.name;
                       const schedShift = item.schedShift;
-                      // 規則更新：當班人員班表不是 "日" 且不是 "夜" 就是請假
-                      const isLeave = (schedShift !== '日' && schedShift !== '夜');
+                      const isLeave = LEAVE_TAGS.includes(schedShift);
                       const isChecked = isPersonPresent(name, true);
                       return (
                         <label
@@ -1912,7 +2020,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       const name = item.name;
                       const schedShift = item.schedShift;
                       const isOT = (schedShift === 'G');
-                      const isLeave = (schedShift !== '日' && schedShift !== '夜' && schedShift !== 'G');
+                      const isLeave = LEAVE_TAGS.includes(schedShift);
                       const isChecked = isPersonPresent(name, false);
                       return (
                         <label
@@ -1996,7 +2104,6 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 >
                   <option value="ALL">全部料況</option>
                   <option value="UNSET">未設定料況</option>
-                  <option value="WAITING">待料停機 (所有待料狀態)</option>
                   {matStatusOptions.map(opt => (
                     <option key={opt.id} value={opt.label}>{opt.label}</option>
                   ))}
@@ -2025,6 +2132,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
             </div>
 
+            {/* Main Interactive Machine Grid */}
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col h-[680px] shadow">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                 <div className="flex items-center space-x-3 flex-wrap gap-y-1">
@@ -2339,7 +2447,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                             title: "刪除機台確認",
                                             message: `確定要刪除機台 [${machine.name}] 嗎？`,
                                             onConfirm: () => {
-                                              setMachines(machines.filter(m => m.id !== machine.id));
+                                              const updated = machines.filter(m => m.id !== machine.id);
+                                              setMachines(updated);
+                                              pushToSupabase({ machines: updated });
                                               showNotice(`已刪除機台 [${machine.name}]`, "info");
                                             }
                                           });
@@ -2374,11 +2484,244 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
           </main>
 
-          {/* Machine Maintenance Modal */}
+          {/* 全區域跨班/跨機台維修記錄查詢 Modal (全螢幕滿版視窗) */}
+          {showMaintQueryModal && (
+            <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col h-screen w-screen p-3 sm:p-5 shadow-2xl overflow-hidden">
+              <div className="bg-slate-900 border border-slate-800 rounded-xl w-full h-full p-4 sm:p-5 shadow-2xl flex flex-col min-h-0">
+                
+                {/* 標題欄 */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+                  <div className="flex items-center space-x-2">
+                    <span className="p-2 bg-amber-950 text-amber-400 border border-amber-800 rounded-lg text-lg">🔧</span>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                        每日/各班/各機台 維修保養記錄查詢 (全螢幕視窗)
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        支援 P/M 開頭料號精準與自動篩選 (如 P50B、M35A...)，並自動統計累積總維修歷時
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowMaintQueryModal(false)}
+                    className="text-slate-400 hover:text-white font-bold p-2 text-xl hover:bg-slate-800 rounded-lg transition"
+                    title="關閉視窗 (Esc)"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* 篩選工具列 */}
+                <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-xl my-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 shrink-0">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">📅 查詢日期</label>
+                    <div className="flex items-center space-x-1">
+                      <input
+                        type="date"
+                        value={maintQueryDate}
+                        onChange={e => setMaintQueryDate(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded focus:outline-none focus:border-amber-500 font-mono w-full"
+                      />
+                      {maintQueryDate && (
+                        <button
+                          onClick={() => setMaintQueryDate("")}
+                          className="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-[11px] px-2.5 py-1.5 rounded border border-slate-700 whitespace-nowrap"
+                          title="顯示全部日期的記錄"
+                        >
+                          全選
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">☀️/🌙 班別篩選</label>
+                    <select
+                      value={maintQueryShift}
+                      onChange={e => setMaintQueryShift(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded w-full focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="ALL">全部班別 (日+夜)</option>
+                      <option value="日">日班</option>
+                      <option value="夜">夜班</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">🏭 機台篩選</label>
+                    <select
+                      value={maintQueryMachine}
+                      onChange={e => setMaintQueryMachine(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded w-full focus:outline-none focus:border-amber-500"
+                    >
+                      <option value="ALL">全部機台</option>
+                      {machines
+                        .filter(m => !EXCLUDED_QUERY_STATIONS.includes(m.name))
+                        .map(m => (
+                          <option key={m.id} value={m.name}>{m.name} {m.type ? `(${m.type})` : ''}</option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-amber-300 mb-1">📦 P/M 料號選單篩選</label>
+                    <select
+                      value={maintQueryMatStatus}
+                      onChange={e => setMaintQueryMatStatus(e.target.value)}
+                      className="bg-slate-900 border border-amber-500/60 text-amber-200 text-xs px-2.5 py-1.5 rounded w-full focus:outline-none font-bold"
+                    >
+                      <option value="ALL">全部料況 (不限)</option>
+                      {pmMatStatusOptions.map(mat => (
+                        <option key={mat} value={mat}>🔍 {mat}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">🔍 關鍵字 (如: P50B)</label>
+                    <input
+                      type="text"
+                      placeholder="關鍵字/P料號/M料號..."
+                      value={maintQueryKeyword}
+                      onChange={e => setMaintQueryKeyword(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded w-full focus:outline-none focus:border-amber-500 placeholder-slate-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 統計摘要資訊 (含查詢期間總歷時/總時數) */}
+                <div className="flex items-center justify-between px-2 mb-2 text-xs text-slate-400 shrink-0 flex-wrap gap-2">
+                  <div className="flex items-center space-x-4 flex-wrap gap-y-1">
+                    <span>查詢結果: <strong className="text-amber-400 font-bold text-sm">{queriedMaintLogs.length}</strong> 筆記錄</span>
+                    
+                    {/* 新增顯示查詢期間維修總時數 */}
+                    <span className="bg-amber-950/80 border border-amber-800/80 px-2.5 py-1 rounded-lg text-amber-200 font-medium flex items-center gap-1.5">
+                      <span>⏱️ 查詢期間總維修歷時:</span>
+                      <strong className="text-amber-300 font-bold text-sm">
+                        {formatTotalHoursStr(totalQueryMaintMinutes)}
+                      </strong>
+                    </span>
+
+                    <span>處理中: <strong className="text-rose-400 font-bold text-sm">{queriedMaintLogs.filter(l => !l.endTime).length}</strong> 筆</span>
+                    <span>完修: <strong className="text-emerald-400 font-bold text-sm">{queriedMaintLogs.filter(l => !!l.endTime).length}</strong> 筆</span>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setMaintQueryDate("");
+                      setMaintQueryShift("ALL");
+                      setMaintQueryMachine("ALL");
+                      setMaintQueryMatStatus("ALL");
+                      setMaintQueryKeyword("");
+                    }}
+                    className="text-amber-400 hover:underline text-xs"
+                  >
+                    重置所有篩選條件
+                  </button>
+                </div>
+
+                {/* 紀錄數據列表 (滿版延伸區塊) */}
+                <div className="flex-1 overflow-y-auto border border-slate-800 rounded-xl bg-slate-950/60 min-h-0 shadow-inner">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-950 text-slate-300 sticky top-0 z-10 border-b border-slate-800 shadow">
+                      <tr>
+                        <th className="p-2.5 font-semibold w-28">日期班別</th>
+                        <th className="p-2.5 font-semibold w-24">機台</th>
+                        <th className="p-2.5 font-semibold w-28">料況 (P/M料號)</th>
+                        <th className="p-2.5 font-semibold">異常原因 / 維修項目</th>
+                        <th className="p-2.5 font-semibold w-32">維修時間</th>
+                        <th className="p-2.5 font-semibold w-24">歷時 (分鐘)</th>
+                        <th className="p-2.5 font-semibold w-24">處理狀態</th>
+                        <th className="p-2.5 font-semibold">處置備註</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80">
+                      {queriedMaintLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="text-center py-16 text-slate-500 text-sm">
+                            無符合條件之維修紀錄
+                          </td>
+                        </tr>
+                      ) : (
+                        queriedMaintLogs.map(log => {
+                          const [lDate, lShift] = (log.shiftKey || "_").split('_');
+                          const isOngoing = !log.endTime;
+                          const durationStr = getMaintDuration(log.startTime, log.endTime);
+                          const targetM = machines.find(m => m.name === log.machineName);
+                          const logMat = log.matStatus || (targetM ? targetM.matStatus : "");
+
+                          return (
+                            <tr key={log.id} className="hover:bg-slate-800/40 transition">
+                              <td className="p-2.5 font-mono text-[11px] text-slate-300 whitespace-nowrap">
+                                <div>{lDate || '未指定'}</div>
+                                <div className="text-[10px] text-amber-400">{lShift ? `${lShift}班` : ''}</div>
+                              </td>
+                              <td className="p-2.5 font-bold text-slate-100 whitespace-nowrap">
+                                {log.machineName}
+                              </td>
+                              <td className="p-2.5 font-mono text-[11px] whitespace-nowrap">
+                                {logMat ? (
+                                  <span className={`px-2 py-0.5 rounded font-bold border ${
+                                    /^[PMpm]/.test(logMat)
+                                      ? "bg-indigo-950 text-indigo-200 border-indigo-700"
+                                      : "bg-slate-800 text-slate-300 border-slate-700"
+                                  }`}>
+                                    {logMat}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600">-</span>
+                                )}
+                              </td>
+                              <td className="p-2.5 text-slate-200 font-medium">
+                                {log.issue}
+                              </td>
+                              <td className="p-2.5 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                                {log.startTime || '--:--'} ~ {log.endTime || '進行中'}
+                              </td>
+                              <td className="p-2.5 font-mono text-slate-300 font-bold whitespace-nowrap">
+                                {durationStr || '-'}
+                              </td>
+                              <td className="p-2.5 whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  isOngoing 
+                                    ? "bg-rose-950 text-rose-300 border border-rose-700 animate-pulse" 
+                                    : "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                                }`}>
+                                  {isOngoing ? "⚠️ 處理中" : "✓ 已完修"}
+                                </span>
+                              </td>
+                              <td className="p-2.5 text-slate-400 text-[11px]">
+                                {log.note || '-'}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 底部關閉按鈕 */}
+                <div className="pt-3 border-t border-slate-800 flex justify-end shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowMaintQueryModal(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-6 py-2 rounded-lg border border-slate-700 font-semibold shadow"
+                  >
+                    關閉視窗
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* Machine Maintenance & Issue Log Modal */}
           {maintModal.open && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-2xl w-full p-5 shadow-2xl flex flex-col max-h-[90vh]">
                 
+                {/* Modal Header */}
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
                   <div className="flex items-center space-x-2">
                     <span className="p-1.5 bg-blue-950 text-blue-400 border border-blue-800 rounded-lg text-base">🔧</span>
@@ -2405,6 +2748,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                 <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1 min-h-0">
                   
+                  {/* Maintenance Records List for Current Shift */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
@@ -2512,6 +2856,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                         )}
                       </div>
 
+                      {/* Quick Issue Category Tags (可編輯選項) */}
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <label className="text-[11px] font-semibold text-slate-400">1. 異常原因 / 維修項目</label>
@@ -2524,6 +2869,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                           </button>
                         </div>
 
+                        {/* 管理模式：新增選項輸入框 */}
                         {isManagingMaintTags && (
                           <div className="flex items-center space-x-1.5 mb-2 bg-slate-900 p-2 rounded border border-slate-800">
                             <input
@@ -2583,6 +2929,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                         />
                       </div>
 
+                      {/* Start & End Time Inputs */}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <div className="flex items-center justify-between mb-1">
@@ -2625,6 +2972,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                         </div>
                       </div>
 
+                      {/* Note Input */}
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-400 mb-1">4. 備註 / 處置說明</label>
                         <input
@@ -2667,251 +3015,264 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
             </div>
           )}
 
-          {/* Maintenance Logs Query Modal */}
-          {showMaintQueryModal && (
-            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
-              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-6xl w-full h-[88vh] p-4 sm:p-6 shadow-2xl flex flex-col">
-                
+          {/* Supabase Connection Status Modal */}
+          {showSupabaseModal && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
-                  <div className="flex items-center space-x-2">
-                    <span className="p-2 bg-amber-950 text-amber-400 border border-amber-800 rounded-lg text-lg">🛠️</span>
-                    <div>
-                      <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                        全廠與跨班別維修保養紀錄查詢
-                      </h3>
-                      <p className="text-xs text-slate-400">
-                        支援按日期區間、班別、指定機台及關鍵字靈活檢索維修履歷與歷時統計
-                      </p>
-                    </div>
+                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                    <IconCloud /> Supabase 雲端連線狀態
+                  </h3>
+                  <button onClick={() => setShowSupabaseModal(false)} className="text-slate-400 hover:text-white font-bold">✕</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-xs">
+                  <div className={`p-2.5 rounded-lg border text-[11px] leading-relaxed ${
+                    supabaseConnected
+                      ? "bg-emerald-950/60 border-emerald-800 text-emerald-300"
+                      : "bg-amber-950/60 border-amber-800 text-amber-300"
+                  }`}>
+                    {supabaseConnected
+                      ? `✅ 目前狀態：已成功連線至雲端資料庫 (${realtimeMode})，所有變更會即時同步給其他裝置`
+                      : `⚠️ 目前狀態：尚未連線${supabaseErrorMsg ? ` 原因：${supabaseErrorMsg}` : ""}`}
                   </div>
-                  <button 
-                    onClick={() => setShowMaintQueryModal(false)}
-                    className="text-slate-400 hover:text-white font-bold p-1 text-lg"
+
+                  <div className="border-t border-slate-800 pt-3 space-y-2">
+                    <div className="font-bold text-amber-400 flex items-center gap-1">
+                      ⚡ Supabase 資料庫建立腳本 (SQL Editor)
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">
+                      若上方顯示「尚未連線」，最常見原因是還沒建立 <code className="text-blue-300">mfg_board</code> 這張表。
+                      複製下方 SQL 語法至 Supabase 儀表板中的 <strong>SQL Editor</strong> 執行即可：
+                    </p>
+                    <textarea
+                      readOnly
+                      value={SQL_SETUP_SCRIPT}
+                      className="w-full h-32 bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-[10px] p-2.5 rounded focus:outline-none"
+                    />
+                    <p className="text-slate-500 text-[10px] leading-relaxed">
+                      💡 建表後回到此看板重新整理頁面即可自動連線。這個版本的 Supabase 網址與金鑰是寫死在程式碼內（DEFAULT_SUPABASE_URL / DEFAULT_SUPABASE_KEY），所有裝置都是連到同一個資料庫。
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 flex justify-end shrink-0">
+                  <button
+                    onClick={() => setShowSupabaseModal(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-1.5 rounded text-xs border border-slate-700"
                   >
-                    ✕
+                    關閉視窗
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
 
-                <div className="py-3 space-y-3 shrink-0">
-                  <div className="bg-slate-950/80 border border-slate-800 p-3 rounded-lg grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">1. 機台名稱</label>
-                      <select
-                        value={maintQueryFilters.machine}
-                        onChange={e => setMaintQueryFilters({ ...maintQueryFilters, machine: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 p-1.5 rounded focus:outline-none focus:border-amber-500"
-                      >
-                        <option value="ALL">全部機台</option>
-                        {machines.map(m => (
-                          <option key={m.id} value={m.name}>{m.name} {m.type ? `(${m.type})` : ''}</option>
-                        ))}
-                      </select>
-                    </div>
+          {/* Unsaved Changes Guard Prompt Modal */}
+          {showUnsavedPrompt && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-amber-500/60 rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+                <h3 className="text-base font-bold text-amber-300 flex items-center gap-2">
+                  ⚠️ 有變更尚未成功同步到雲端！
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  剛才的派工或點名變更似乎尚未成功送上雲端（可能是網路不穩或雲端連線失敗），切換日期或班別前是否需要再嘗試儲存一次？
+                </p>
+                <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
+                  <button
+                    onClick={() => handleConfirmUnsavedPrompt(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded text-xs border border-slate-700"
+                  >
+                    不儲存直接離開
+                  </button>
+                  <button
+                    onClick={() => handleConfirmUnsavedPrompt(true)}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-1.5 rounded text-xs font-semibold shadow"
+                  >
+                    💾 再試一次並繼續
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">2. 班別</label>
-                      <select
-                        value={maintQueryFilters.shiftTime}
-                        onChange={e => setMaintQueryFilters({ ...maintQueryFilters, shiftTime: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 p-1.5 rounded focus:outline-none focus:border-amber-500"
-                      >
-                        <option value="ALL">全部班別 (日/夜)</option>
-                        <option value="日">☀️ 日班</option>
-                        <option value="夜">🌙 夜班</option>
-                      </select>
-                    </div>
+          {/* General Confirmation Dialog */}
+          {confirmDialog.open && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+                <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                  ⚠️ {confirmDialog.title}
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  {confirmDialog.message}
+                </p>
+                <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
+                  <button
+                    onClick={() => setConfirmDialog({ open: false, title: "", message: "", onConfirm: null })}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3.5 py-1.5 rounded text-xs border border-slate-700"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirmDialog.onConfirm) confirmDialog.onConfirm();
+                      setConfirmDialog({ open: false, title: "", message: "", onConfirm: null });
+                    }}
+                    className="bg-rose-600 hover:bg-rose-500 text-white px-3.5 py-1.5 rounded text-xs font-semibold shadow"
+                  >
+                    確定執行
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">3. 起始日期</label>
-                      <input
-                        type="date"
-                        value={maintQueryFilters.startDate}
-                        onChange={e => setMaintQueryFilters({ ...maintQueryFilters, startDate: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 p-1.5 rounded focus:outline-none font-mono focus:border-amber-500"
-                      />
-                    </div>
+          {/* Quick Assign Personnel Modal */}
+          {assignModal.open && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-5 shadow-2xl">
+                {(() => {
+                  const targetM = machines.find(m => m.id === assignModal.machineId);
+                  const matchingGroups = targetM ? getMatchingSkillGroups(targetM.name) : [];
+                  const qualifiedMembersSet = new Set(matchingGroups.flatMap(g => g.members));
 
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">4. 結束日期</label>
-                      <input
-                        type="date"
-                        value={maintQueryFilters.endDate}
-                        onChange={e => setMaintQueryFilters({ ...maintQueryFilters, endDate: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 p-1.5 rounded focus:outline-none font-mono focus:border-amber-500"
-                      />
-                    </div>
+                  const dutyPresentCount = currentDutyPool.filter(p => isPersonPresent(p, true)).length;
+                  const supportPresentCount = currentSupportPool.filter(p => isPersonPresent(p, false)).length;
 
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">5. 完修狀態</label>
-                      <select
-                        value={maintQueryFilters.status}
-                        onChange={e => setMaintQueryFilters({ ...maintQueryFilters, status: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 p-1.5 rounded focus:outline-none focus:border-amber-500"
-                      >
-                        <option value="ALL">全部狀態</option>
-                        <option value="ONGOING">⚠️ 進行中 (未完修)</option>
-                        <option value="COMPLETED">✓ 已完修</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">6. 關鍵字搜尋</label>
-                      <div className="flex items-center space-x-1">
-                        <input
-                          type="text"
-                          placeholder="搜尋原因或備註..."
-                          value={maintQueryFilters.keyword}
-                          onChange={e => setMaintQueryFilters({ ...maintQueryFilters, keyword: e.target.value })}
-                          className="w-full bg-slate-900 border border-slate-700 text-slate-200 p-1.5 rounded focus:outline-none focus:border-amber-500"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setMaintQueryFilters({ machine: "ALL", shiftTime: "ALL", startDate: "", endDate: "", keyword: "", status: "ALL" })}
-                          className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1.5 rounded text-[11px] shrink-0 border border-slate-700"
-                          title="重置所有搜尋條件"
+                  return (
+                    <>
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                        <div>
+                          <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                            👤 快速指派{assignModal.role === "operator" ? "【操作員】" : "【預備員】"}
+                          </h3>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            機台：<span className="text-blue-300 font-bold">{targetM ? targetM.name : ''}</span>
+                            {matchingGroups.length > 0 ? (
+                              <span className="ml-2 text-purple-300 bg-purple-950/80 px-1.5 py-0.5 rounded border border-purple-800/60">
+                                技能分組：{matchingGroups.map(g => g.name).join(", ")}
+                              </span>
+                            ) : (
+                              <span className="ml-2 text-slate-500">(未設定技能分組)</span>
+                            )}
+                          </p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setAssignModal({ open: false, machineId: null, role: null });
+                            setAllowCrossGroup(false);
+                          }}
+                          className="text-slate-400 hover:text-white font-bold"
                         >
-                          清除
+                          ✕
                         </button>
                       </div>
-                    </div>
-                  </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
-                      <div className="text-[11px] text-slate-400 font-medium">符合條件紀錄</div>
-                      <div className="text-xl font-bold text-amber-300 mt-0.5">{queryMetrics.total} <span className="text-xs font-normal text-slate-400">筆</span></div>
-                    </div>
-                    <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
-                      <div className="text-[11px] text-rose-400 font-medium">維修處理中</div>
-                      <div className="text-xl font-bold text-rose-400 mt-0.5">{queryMetrics.ongoing} <span className="text-xs font-normal text-slate-400">機台</span></div>
-                    </div>
-                    <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
-                      <div className="text-[11px] text-emerald-400 font-medium">已完修項目</div>
-                      <div className="text-xl font-bold text-emerald-300 mt-0.5">{queryMetrics.completed} <span className="text-xs font-normal text-slate-400">筆</span></div>
-                    </div>
-                    <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-lg">
-                      <div className="text-[11px] text-blue-400 font-medium">完修累計歷時</div>
-                      <div className="text-xl font-bold text-blue-300 mt-0.5">
-                        {queryMetrics.totalMinutes} <span className="text-xs font-normal text-slate-400">分鐘</span>
-                        <span className="text-xs text-slate-500 font-normal ml-1">({queryMetrics.totalHours}小時)</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                      <div className="py-3 space-y-3">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex space-x-1">
+                            <button
+                              onClick={() => setActiveTabPool("duty")}
+                              className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                                activeTabPool === "duty" ? "bg-purple-600 text-white font-bold" : "bg-slate-800 text-slate-400"
+                              }`}
+                            >
+                              {categorizedPersonnel.dutySquad}當班 ({dutyPresentCount}人)
+                            </button>
+                            <button
+                              onClick={() => setActiveTabPool("support")}
+                              className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                                activeTabPool === "support" ? "bg-blue-600 text-white font-bold" : "bg-slate-800 text-slate-400"
+                              }`}
+                            >
+                              {categorizedPersonnel.supportSquad}支援 ({supportPresentCount}人)
+                            </button>
+                          </div>
 
-                <div className="flex-1 overflow-hidden border border-slate-800 rounded-lg bg-slate-950/60 flex flex-col min-h-0">
-                  <div className="overflow-y-auto flex-1 p-1">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead className="bg-slate-900 text-slate-300 sticky top-0 z-10 border-b border-slate-800 shadow">
-                        <tr>
-                          <th className="p-2.5 font-bold w-24">日期班別</th>
-                          <th className="p-2.5 font-bold w-20">機台</th>
-                          <th className="p-2.5 font-bold">異常原因 / 維修保養項目</th>
-                          <th className="p-2.5 font-bold w-36">維修時間與歷時</th>
-                          <th className="p-2.5 font-bold w-28">完修狀態</th>
-                          <th className="p-2.5 font-bold">備註 / 處置說明</th>
-                          {userRole === 'admin' && (
-                            <th className="p-2.5 font-bold w-20 text-center">操作</th>
+                          {matchingGroups.length > 0 && (
+                            <label className="flex items-center space-x-1 cursor-pointer text-[11px] text-amber-400 select-none bg-slate-950 px-2 py-1 rounded border border-amber-900/40">
+                              <input
+                                type="checkbox"
+                                checked={allowCrossGroup}
+                                onChange={e => setAllowCrossGroup(e.target.checked)}
+                                className="rounded border-amber-600 text-amber-600 w-3 h-3 bg-slate-900"
+                              />
+                              <span>開放跨組支援</span>
+                            </label>
                           )}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 font-mono">
-                        {filteredQueryLogs.length === 0 ? (
-                          <tr>
-                            <td colSpan={userRole === 'admin' ? 7 : 6} className="text-center py-12 text-slate-500 text-xs">
-                              🔍 查無符合條件的維修保養紀錄
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredQueryLogs.map(log => {
-                            const isOngoing = !log.endTime;
-                            const shiftKeyParts = (log.shiftKey || "").split("_");
-                            const logDate = shiftKeyParts[0] || "--";
-                            const logShift = shiftKeyParts[1] || "";
-                            const duration = getMaintDuration(log.startTime, log.endTime);
+                        </div>
 
-                            return (
-                              <tr key={log.id} className="hover:bg-slate-800/50 transition">
-                                <td className="p-2.5 text-slate-300 whitespace-nowrap">
-                                  <div>{logDate}</div>
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                                    logShift === '日' ? 'bg-amber-950 text-amber-300 border border-amber-800' : 'bg-indigo-950 text-indigo-300 border border-indigo-800'
-                                  }`}>
-                                    {logShift}班
+                        <div className="grid grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-1">
+                          {(() => {
+                            const isDutyTab = activeTabPool === "duty";
+                            const activePool = isDutyTab ? currentDutyPool : currentSupportPool;
+                            
+                            const basePool = activePool.filter(person => isPersonPresent(person, isDutyTab));
+
+                            const hasGroupRestriction = matchingGroups.length > 0 && !allowCrossGroup;
+                            const availablePersons = hasGroupRestriction
+                              ? basePool.filter(person => qualifiedMembersSet.has(person))
+                              : basePool;
+
+                            if (availablePersons.length === 0) {
+                              return (
+                                <div className="col-span-3 text-center py-6 text-slate-400 text-xs bg-slate-950/60 rounded-lg p-3 border border-slate-800">
+                                  {hasGroupRestriction ? (
+                                    <>
+                                      ⚠️ 此組別無「已出勤」且「具操機資格」的人員<br/>
+                                      <span className="text-[10px] text-amber-400/90 block mt-1">
+                                        💡 可勾選右上角「開放跨組支援」或至「機台人員分組」調整資格
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      ⚠️ 此組別當前無出勤人員<br/>
+                                      <span className="text-[10px] text-slate-500">(請先於「現場出勤點名表」確認勾選出勤)</span>
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            }
+
+                            return availablePersons.map(person => {
+                              const statusInfo = assignedMap[person];
+                              const isQualified = qualifiedMembersSet.has(person);
+                              return (
+                                <button
+                                  key={person}
+                                  onClick={() => handleAssignPersonFromModal(person)}
+                                  className={`p-2 rounded-lg text-xs font-medium border text-center transition flex flex-col items-center justify-center relative ${
+                                    statusInfo 
+                                      ? "bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-800"
+                                      : isDutyTab
+                                        ? "bg-purple-950/60 border-purple-800/80 text-purple-200 hover:bg-purple-900/80"
+                                        : "bg-blue-950/60 border-blue-800/80 text-blue-200 hover:bg-blue-900/80"
+                                  }`}
+                                >
+                                  <span className="font-bold flex items-center gap-1">
+                                    {person}
+                                    {matchingGroups.length > 0 && isQualified && (
+                                      <span className="text-[9px] text-emerald-400" title="具備該機台操機資格">✓</span>
+                                    )}
                                   </span>
-                                </td>
-
-                                <td className="p-2.5 font-bold text-slate-100 whitespace-nowrap">
-                                  {log.machineName}
-                                </td>
-
-                                <td className="p-2.5 text-slate-200 font-sans font-semibold">
-                                  {log.issue}
-                                </td>
-
-                                <td className="p-2.5 text-slate-300 whitespace-nowrap">
-                                  <div>{log.startTime || '--:--'} ~ {log.endTime || '進行中'}</div>
-                                  {duration && <div className="text-[10px] text-blue-400 font-bold">{duration}</div>}
-                                </td>
-
-                                <td className="p-2.5 whitespace-nowrap">
-                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                    isOngoing 
-                                      ? "bg-rose-950 text-rose-300 border border-rose-700 animate-pulse" 
-                                      : "bg-emerald-950 text-emerald-300 border border-emerald-800"
-                                  }`}>
-                                    {isOngoing ? "⚠️ 進行中" : "✓ 已修復完成"}
-                                  </span>
-                                </td>
-
-                                <td className="p-2.5 text-slate-400 font-sans truncate max-w-xs" title={log.note || ''}>
-                                  {log.note || <span className="text-slate-600">-</span>}
-                                </td>
-
-                                {userRole === 'admin' && (
-                                  <td className="p-2.5 text-center whitespace-nowrap">
-                                    <button
-                                      onClick={() => handleDeleteMaintLog(log.id)}
-                                      className="text-rose-400 hover:text-rose-200 text-xs px-2 py-1 bg-slate-900 rounded border border-slate-700"
-                                    >
-                                      刪除
-                                    </button>
-                                  </td>
-                                )}
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-slate-800 flex items-center justify-between shrink-0">
-                  <div className="text-xs text-slate-400">
-                    顯示 <strong className="text-amber-300">{filteredQueryLogs.length}</strong> / 總數 {maintenanceLogs.length} 筆維修紀錄
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => {
-                        const lines = filteredQueryLogs.map(l => 
-                          `• [${l.shiftKey}] ${l.machineName}: ${l.issue} (${l.startTime || ''}~${l.endTime || '進行中'}${getMaintDuration(l.startTime, l.endTime)}) 備註:${l.note || '無'}`
-                        );
-                        copyFallback(`【維修保養紀錄查詢匯出】\n` + lines.join("\n"));
-                      }}
-                      className="bg-emerald-700 hover:bg-emerald-600 text-white text-xs px-3 py-1.5 rounded-lg border border-emerald-600 flex items-center"
-                    >
-                      <IconClipboard /> 複製查詢結果
-                    </button>
-                    <button
-                      onClick={() => setShowMaintQueryModal(false)}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-1.5 rounded-lg border border-slate-700 font-medium"
-                    >
-                      關閉視窗
-                    </button>
-                  </div>
-                </div>
-
+                                  {statusInfo ? (
+                                    <span className="text-[9px] text-slate-400 mt-0.5 truncate max-w-full">
+                                      已派: {statusInfo.machineName}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] text-emerald-400 mt-0.5">
+                                      可指派
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -2938,6 +3299,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                 <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 py-4 min-h-0 overflow-hidden">
                   
+                  {/* Left Column: Group List & Search */}
                   <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-3 flex flex-col min-h-0">
                     <div className="flex items-center justify-between mb-2 shrink-0">
                       <span className="text-xs font-bold text-slate-300">技能分組清單</span>
@@ -3005,6 +3367,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     </div>
                   </div>
 
+                  {/* Right Column: Active Group Config Panel */}
                   <div className="md:col-span-2 bg-slate-950/80 border border-slate-800 rounded-lg p-4 flex flex-col min-h-0 overflow-hidden">
                     {(() => {
                       const currentList = Array.isArray(skillGroups) && skillGroups.length > 0 ? skillGroups : DEFAULT_SKILL_GROUPS;
@@ -3022,6 +3385,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                       return (
                         <div className="flex-1 flex flex-col min-h-0 space-y-3 overflow-y-auto pr-1">
+                          
                           <div>
                             <label className="block text-xs font-bold text-slate-300 mb-1">分組名稱</label>
                             <input
@@ -3379,7 +3743,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-slate-400 mb-1 font-medium">初始機況</label>
+                        <label className="block text-slate-400 mb-1 font-semibold">初始機況</label>
                         <select
                           value={newMachine.mStatus}
                           onChange={e => setNewMachine({ ...newMachine, mStatus: e.target.value })}
@@ -3392,7 +3756,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       </div>
 
                       <div>
-                        <label className="block text-slate-400 mb-1 font-medium">初始料況</label>
+                        <label className="block text-slate-400 mb-1 font-semibold">初始料況</label>
                         <select
                           value={newMachine.matStatus}
                           onChange={e => setNewMachine({ ...newMachine, matStatus: e.target.value })}
@@ -3450,8 +3814,13 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                                 type="button"
                                 onClick={() => {
                                   if (!editingTypeValue.trim()) return;
-                                  const updated = machineTypes.map((t, i) => i === index ? editingTypeValue.trim() : t);
-                                  setMachineTypes(updated);
+                                  const oldType = machineTypes[index];
+                                  const newTypeVal = editingTypeValue.trim();
+                                  const updatedTypes = machineTypes.map((t, i) => i === index ? newTypeVal : t);
+                                  const updatedMachines = machines.map(m => m.type === oldType ? { ...m, type: newTypeVal } : m);
+                                  setMachineTypes(updatedTypes);
+                                  setMachines(updatedMachines);
+                                  pushToSupabase({ machineTypes: updatedTypes, machines: updatedMachines });
                                   setEditingTypeIndex(null);
                                   setEditingTypeValue("");
                                 }}
@@ -3482,7 +3851,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                             <button
                               type="button"
                               onClick={() => {
-                                setMachineTypes(machineTypes.filter(t => t !== type));
+                                const updated = machineTypes.filter(t => t !== type);
+                                setMachineTypes(updated);
+                                pushToSupabase({ machineTypes: updated });
                               }}
                               className="text-rose-400 hover:text-rose-200 text-xs px-2 py-1 bg-slate-800 rounded border border-slate-700"
                             >
@@ -3508,7 +3879,9 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                           onClick={() => {
                             if (!newTypeName.trim()) return;
                             if (!machineTypes.includes(newTypeName.trim())) {
-                              setMachineTypes([...machineTypes, newTypeName.trim()]);
+                              const updated = [...machineTypes, newTypeName.trim()];
+                              setMachineTypes(updated);
+                              pushToSupabase({ machineTypes: updated });
                               setNewTypeName("");
                             }
                           }}
@@ -3593,7 +3966,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                   {pwError && (
                     <div className="text-[11px] text-rose-400 font-medium pt-1">
-                      ⚠️️ {pwError}
+                      ⚠️ {pwError}
                     </div>
                   )}
 
