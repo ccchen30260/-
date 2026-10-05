@@ -542,19 +542,27 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
 
       const isPersonPresent = (personName, isDuty) => {
-        if (attendanceMap[personName] !== undefined) {
-          return !!attendanceMap[personName];
-        }
-        const itemObj = isDuty
-          ? categorizedPersonnel.duty.find(i => i.name === personName)
-          : categorizedPersonnel.support.find(i => i.name === personName);
-        if (!itemObj) return false;
-        const sVal = itemObj.schedShift;
         if (isDuty) {
+          if (attendanceMap[personName] !== undefined) {
+            return !!attendanceMap[personName];
+          }
+          const itemObj = categorizedPersonnel.duty.find(i => i.name === personName);
+          if (!itemObj) return false;
+          const sVal = itemObj.schedShift;
           // 當班人員只要排班不是 "日" 且不是 "夜"，即代表請假/非出勤，預設不勾選
           return (sVal === '日' || sVal === '夜');
         } else {
-          return sVal === 'G';
+          const itemObj = categorizedPersonnel.support.find(i => i.name === personName);
+          if (!itemObj) return false;
+          const sVal = itemObj.schedShift;
+          // 支援人員：沒有 "G" 代表沒加班，預設不打勾 (false)
+          if (sVal !== 'G') {
+            return false;
+          }
+          if (attendanceMap[personName] !== undefined) {
+            return !!attendanceMap[personName];
+          }
+          return true; // 具備 G 加班班別預設勾選出勤
         }
       };
 
@@ -754,23 +762,31 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const shiftKey = `${selectedDate}_${selectedShiftTime}`;
         const existingSnap = schedulesMap[shiftKey];
 
+        const freshAttendance = {};
+        categorizedPersonnel.duty.forEach(item => {
+          const sVal = item.schedShift;
+          // 當班人員：非 "日" 且非 "夜" 者代表請假，預設不勾選 (false)
+          freshAttendance[item.name] = (sVal === '日' || sVal === '夜');
+        });
+
+        categorizedPersonnel.support.forEach(item => {
+          const sVal = item.schedShift;
+          // 支援人員：沒有 "G" 代表沒加班，預設不打勾 (false)
+          freshAttendance[item.name] = (sVal === 'G');
+        });
+
         if (existingSnap && existingSnap.attendanceMap && Object.keys(existingSnap.attendanceMap).length > 0) {
-          setAttendanceMap(existingSnap.attendanceMap);
-          if (existingSnap.machines) setMachines(existingSnap.machines);
-          setSavedSnapshot(JSON.parse(JSON.stringify(existingSnap)));
-        } else {
-          const freshAttendance = {};
-          categorizedPersonnel.duty.forEach(item => {
-            const sVal = item.schedShift;
-            // 當班人員：非 "日" 且非 "夜" 者代表請假，預設不勾選 (false)
-            freshAttendance[item.name] = (sVal === '日' || sVal === '夜');
-          });
-
+          // 校正既有資料：若支援人員未排 G 加班，強制設為 false
+          const cleanedAttendance = { ...existingSnap.attendanceMap };
           categorizedPersonnel.support.forEach(item => {
-            const sVal = item.schedShift;
-            freshAttendance[item.name] = (sVal === 'G');
+            if (item.schedShift !== 'G') {
+              cleanedAttendance[item.name] = false;
+            }
           });
-
+          setAttendanceMap(cleanedAttendance);
+          if (existingSnap.machines) setMachines(existingSnap.machines);
+          setSavedSnapshot(JSON.parse(JSON.stringify({ ...existingSnap, attendanceMap: cleanedAttendance })));
+        } else {
           setAttendanceMap(freshAttendance);
           setSavedSnapshot({ machines, attendanceMap: freshAttendance });
         }
