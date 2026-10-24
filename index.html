@@ -1491,6 +1491,26 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         showNotice("已更新狀態名稱", "success");
       };
 
+      const moveStatusOption = (type, id, offset) => {
+        const optionsList = type === "mStatus" ? mStatusOptions : matStatusOptions;
+        const idx = optionsList.findIndex(o => o.id === id);
+        if (idx < 0) return;
+        const targetIdx = idx + offset;
+        if (targetIdx < 0 || targetIdx >= optionsList.length) return;
+
+        const updated = [...optionsList];
+        const [moved] = updated.splice(idx, 1);
+        updated.splice(targetIdx, 0, moved);
+
+        if (type === "mStatus") {
+          setMStatusOptions(updated);
+          pushToSupabase({ mStatusOptions: updated });
+        } else {
+          setMatStatusOptions(updated);
+          pushToSupabase({ matStatusOptions: updated });
+        }
+      };
+
       const handleDeleteStatusOption = (type, id, label) => {
         setConfirmDialog({
           open: true,
@@ -3538,7 +3558,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                 </div>
 
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {(statusModal.type === "mStatus" ? mStatusOptions : matStatusOptions).map(opt => (
+                  {(statusModal.type === "mStatus" ? mStatusOptions : matStatusOptions).map((opt, idx, arr) => (
                     <div key={opt.id} className="flex items-center justify-between space-x-2">
                       {isManagingStatuses && editingStatusId === opt.id ? (
                         <div className="flex items-center space-x-1.5 flex-1">
@@ -3574,25 +3594,55 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                         </button>
                       )}
 
-                      {isManagingStatuses && userRole === 'admin' && (
+                      {/* 上下調整位置按鈕 (管理模式或一般模式皆可用) */}
+                      {userRole === 'admin' && (
                         <div className="flex items-center space-x-1 shrink-0">
-                          <button
-                            onClick={() => {
-                              setEditingStatusId(opt.id);
-                              setEditingStatusLabel(opt.label);
-                            }}
-                            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs"
-                            title="編輯名稱"
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            onClick={() => handleDeleteStatusOption(statusModal.type, opt.id, opt.label)}
-                            className="p-1.5 bg-slate-800 hover:bg-rose-950 text-rose-400 rounded text-xs"
-                            title="刪除狀態"
-                          >
-                            🗑
-                          </button>
+                          <div className="flex flex-col text-[10px] bg-slate-800 rounded border border-slate-700 p-0.5">
+                            <button
+                              disabled={idx === 0}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                moveStatusOption(statusModal.type, opt.id, -1);
+                              }}
+                              className={`px-1 hover:text-blue-400 font-bold ${idx === 0 ? 'opacity-30 cursor-not-allowed' : 'text-slate-300'}`}
+                              title="向上移動"
+                            >
+                              ▲
+                            </button>
+                            <button
+                              disabled={idx === arr.length - 1}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                moveStatusOption(statusModal.type, opt.id, 1);
+                              }}
+                              className={`px-1 hover:text-blue-400 font-bold ${idx === arr.length - 1 ? 'opacity-30 cursor-not-allowed' : 'text-slate-300'}`}
+                              title="向下移動"
+                            >
+                              ▼
+                            </button>
+                          </div>
+
+                          {isManagingStatuses && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setEditingStatusId(opt.id);
+                                  setEditingStatusLabel(opt.label);
+                                }}
+                                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs"
+                                title="編輯名稱"
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={() => handleDeleteStatusOption(statusModal.type, opt.id, opt.label)}
+                                className="p-1.5 bg-slate-800 hover:bg-rose-950 text-rose-400 rounded text-xs"
+                                title="刪除狀態"
+                              >
+                                🗑
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
