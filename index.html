@@ -1253,6 +1253,124 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         });
       };
 
+      const handleAutoAssignWork = () => {
+        const dutyPresent = categorizedPersonnel.duty.filter(item => isPersonPresent(item.name, true)).map(i => i.name);
+        const supportPresent = categorizedPersonnel.support.filter(item => isPersonPresent(item.name, false)).map(i => i.name);
+        const availablePool = [...dutyPresent, ...supportPresent];
+
+        if (availablePool.length === 0) {
+          showNotice("目前沒有任何出勤人員可以安排！", "error");
+          return;
+        }
+
+        const freqMap = {};
+        Object.values(schedulesMap).forEach(shiftRecord => {
+          if (shiftRecord && shiftRecord.machines) {
+            shiftRecord.machines.forEach(m => {
+              if (!freqMap[m.name]) freqMap[m.name] = {};
+              if (m.operator) {
+                if (!freqMap[m.name][m.operator]) freqMap[m.name][m.operator] = { op: 0, bk: 0 };
+                freqMap[m.name][m.operator].op++;
+              }
+              if (m.backup) {
+                if (!freqMap[m.name][m.backup]) freqMap[m.name][m.backup] = { op: 0, bk: 0 };
+                freqMap[m.name][m.backup].bk++;
+              }
+            });
+          }
+        });
+
+        const validGroups = Array.isArray(skillGroups) && skillGroups.length > 0 ? skillGroups : DEFAULT_SKILL_GROUPS;
+        
+        const isQualified = (personName, machineName) => {
+          return validGroups.some(g => 
+            Array.isArray(g.machines) && g.machines.includes(machineName) &&
+            Array.isArray(g.members) && g.members.includes(personName)
+          );
+        };
+
+        let currentAssigned = new Set();
+        const nextMachines = machines.map(m => {
+          const newM = { ...m };
+          if (newM.operator) currentAssigned.add(newM.operator);
+          if (newM.backup) currentAssigned.add(newM.backup);
+          return newM;
+        });
+
+        let assignCount = 0;
+
+        const assignForMachines = (machineNames) => {
+           const targetMs = nextMachines.filter(m => machineNames.includes(m.name));
+           if (targetMs.length === 0) return;
+           const leadMachine = targetMs[0];
+
+           if (!leadMachine.operator) {
+              let bestOp = null;
+              let bestScore = -1;
+              for (const p of availablePool) {
+                if (currentAssigned.has(p)) continue;
+                if (!isQualified(p, leadMachine.name)) continue;
+                
+                let score = 0;
+                if (freqMap[leadMachine.name] && freqMap[leadMachine.name][p]) {
+                  score = freqMap[leadMachine.name][p].op * 2 + freqMap[leadMachine.name][p].bk;
+                }
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestOp = p;
+                }
+              }
+              if (bestOp) {
+                targetMs.forEach(m => m.operator = bestOp);
+                currentAssigned.add(bestOp);
+                assignCount++;
+              }
+           }
+
+           if (!leadMachine.backup) {
+              let bestBk = null;
+              let bestScore = -1;
+              for (const p of availablePool) {
+                if (currentAssigned.has(p)) continue;
+                if (!isQualified(p, leadMachine.name)) continue;
+                
+                let score = 0;
+                if (freqMap[leadMachine.name] && freqMap[leadMachine.name][p]) {
+                  score = freqMap[leadMachine.name][p].bk * 2 + freqMap[leadMachine.name][p].op;
+                }
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestBk = p;
+                }
+              }
+              if (bestBk) {
+                targetMs.forEach(m => m.backup = bestBk);
+                currentAssigned.add(bestBk);
+                assignCount++;
+              }
+           }
+        };
+
+        REWINDER_GROUPS.forEach(group => {
+           assignForMachines(group.members);
+        });
+
+        nextMachines.forEach(m => {
+          const group = REWINDER_GROUPS.find(g => g.members.includes(m.name));
+          if (group) return; 
+          assignForMachines([m.name]);
+        });
+
+        setMachines(nextMachines);
+        pushToSupabase({ machines: nextMachines });
+        
+        if (assignCount > 0) {
+          showNotice(`已智能安排 ${assignCount} 個崗位！`, "success");
+        } else {
+          showNotice("目前無符合條件的人員可自動安排（或人員已全數派完）", "info");
+        }
+      };
+
       const assignedMap = useMemo(() => {
         const map = {};
         machines.forEach(m => {
@@ -1797,6 +1915,14 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       title="所有變更已即時自動同步；此按鈕可再次手動強制儲存一次目前狀態"
                     >
                       💾 儲存看板 {isDirty ? "(尚未同步)" : ""}
+                    </button>
+
+                    <button 
+                      onClick={handleAutoAssignWork}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition shadow"
+                      title="依照過往歷史紀錄與技能分組，智能自動派工"
+                    >
+                      🤖 自動排班
                     </button>
 
                     <button 
