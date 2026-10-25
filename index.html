@@ -447,6 +447,9 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       // Drag and Drop state
       const [draggedMachineId, setDraggedMachineId] = useState(null);
 
+      // 狀態選項拖曳 State
+      const [draggedStatusId, setDraggedStatusId] = useState(null);
+
       const [assignModal, setAssignModal] = useState({ open: false, machineId: null, role: null });
       const [statusModal, setStatusModal] = useState({ open: false, machineId: null, type: null });
       const [isManagingStatuses, setIsManagingStatuses] = useState(false);
@@ -1501,6 +1504,27 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const updated = [...optionsList];
         const [moved] = updated.splice(idx, 1);
         updated.splice(targetIdx, 0, moved);
+
+        if (type === "mStatus") {
+          setMStatusOptions(updated);
+          pushToSupabase({ mStatusOptions: updated });
+        } else {
+          setMatStatusOptions(updated);
+          pushToSupabase({ matStatusOptions: updated });
+        }
+      };
+
+      // 滑鼠拖曳直接移至指定位置
+      const moveStatusOptionToPosition = (type, fromId, toId) => {
+        if (!fromId || !toId || fromId === toId) return;
+        const optionsList = type === "mStatus" ? mStatusOptions : matStatusOptions;
+        const fromIdx = optionsList.findIndex(o => o.id === fromId);
+        const toIdx = optionsList.findIndex(o => o.id === toId);
+        if (fromIdx < 0 || toIdx < 0) return;
+
+        const updated = [...optionsList];
+        const [moved] = updated.splice(fromIdx, 1);
+        updated.splice(toIdx, 0, moved);
 
         if (type === "mStatus") {
           setMStatusOptions(updated);
@@ -3559,7 +3583,33 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                   {(statusModal.type === "mStatus" ? mStatusOptions : matStatusOptions).map((opt, idx, arr) => (
-                    <div key={opt.id} className="flex items-center justify-between space-x-2">
+                    <div 
+                      key={opt.id} 
+                      draggable={userRole === 'admin'}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('text/plain', opt.id);
+                        setDraggedStatusId(opt.id);
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const fromId = e.dataTransfer.getData('text/plain') || draggedStatusId;
+                        moveStatusOptionToPosition(statusModal.type, fromId, opt.id);
+                        setDraggedStatusId(null);
+                      }}
+                      className={`flex items-center justify-between space-x-2 transition ${
+                        draggedStatusId === opt.id ? 'opacity-30 bg-blue-900/40 rounded' : ''
+                      }`}
+                    >
+                      {userRole === 'admin' && (
+                        <span 
+                          className="text-slate-500 hover:text-slate-200 cursor-grab active:cursor-grabbing font-mono text-xs px-1 select-none" 
+                          title="按住滑鼠左鍵可直接拖曳調整順序"
+                        >
+                          ⠿
+                        </span>
+                      )}
+
                       {isManagingStatuses && editingStatusId === opt.id ? (
                         <div className="flex items-center space-x-1.5 flex-1">
                           <input
