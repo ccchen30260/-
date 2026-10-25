@@ -1263,18 +1263,17 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
           return;
         }
 
+        // 1. 基於歷史排班數據精準計算每個人在各機台的經驗值(出勤頻率)
         const freqMap = {};
         Object.values(schedulesMap).forEach(shiftRecord => {
           if (shiftRecord && shiftRecord.machines) {
             shiftRecord.machines.forEach(m => {
               if (!freqMap[m.name]) freqMap[m.name] = {};
               if (m.operator) {
-                if (!freqMap[m.name][m.operator]) freqMap[m.name][m.operator] = { op: 0, bk: 0 };
-                freqMap[m.name][m.operator].op++;
+                freqMap[m.name][m.operator] = (freqMap[m.name][m.operator] || 0) + 1;
               }
               if (m.backup) {
-                if (!freqMap[m.name][m.backup]) freqMap[m.name][m.backup] = { op: 0, bk: 0 };
-                freqMap[m.name][m.backup].bk++;
+                freqMap[m.name][m.backup] = (freqMap[m.name][m.backup] || 0) + 1;
               }
             });
           }
@@ -1302,19 +1301,21 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         const assignForMachines = (machineNames) => {
            const targetMs = nextMachines.filter(m => machineNames.includes(m.name));
            if (targetMs.length === 0) return;
+           
+           // ★ 條件 1：只有機台或群組中至少有一台是「正常運轉」，才需要安排人員
+           if (!targetMs.some(m => m.mStatus === "正常運轉")) return;
+           
            const leadMachine = targetMs[0];
 
+           // ★ 條件 2：預設一個機台只安排一個人 (操作員)
            if (!leadMachine.operator) {
               let bestOp = null;
-              let bestScore = -1;
+              let bestScore = -1; // 初始化為 -1，讓沒有歷史紀錄(分數0)但具備資格的人也能被選上
               for (const p of availablePool) {
                 if (currentAssigned.has(p)) continue;
                 if (!isQualified(p, leadMachine.name)) continue;
                 
-                let score = 0;
-                if (freqMap[leadMachine.name] && freqMap[leadMachine.name][p]) {
-                  score = freqMap[leadMachine.name][p].op * 2 + freqMap[leadMachine.name][p].bk;
-                }
+                let score = freqMap[leadMachine.name] && freqMap[leadMachine.name][p] ? freqMap[leadMachine.name][p] : 0;
                 if (score > bestScore) {
                   bestScore = score;
                   bestOp = p;
@@ -1327,17 +1328,15 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
               }
            }
 
-           if (!leadMachine.backup) {
+           // ★ 條件 3：除了 QC 固定至少 2 人外，其餘機台皆不再排預備員
+           if (leadMachine.name === "QC" && !leadMachine.backup) {
               let bestBk = null;
               let bestScore = -1;
               for (const p of availablePool) {
                 if (currentAssigned.has(p)) continue;
                 if (!isQualified(p, leadMachine.name)) continue;
                 
-                let score = 0;
-                if (freqMap[leadMachine.name] && freqMap[leadMachine.name][p]) {
-                  score = freqMap[leadMachine.name][p].bk * 2 + freqMap[leadMachine.name][p].op;
-                }
+                let score = freqMap[leadMachine.name] && freqMap[leadMachine.name][p] ? freqMap[leadMachine.name][p] : 0;
                 if (score > bestScore) {
                   bestScore = score;
                   bestBk = p;
@@ -1365,7 +1364,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         pushToSupabase({ machines: nextMachines });
         
         if (assignCount > 0) {
-          showNotice(`已智能安排 ${assignCount} 個崗位！`, "success");
+          showNotice(`已依照歷史紀錄智能安排 ${assignCount} 個崗位！`, "success");
         } else {
           showNotice("目前無符合條件的人員可自動安排（或人員已全數派完）", "info");
         }
