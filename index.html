@@ -2380,88 +2380,46 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
               </div>
 
               {(() => {
-                const boardZones = [
-                    { 
-                        id: 'zone-lotB', 
-                        title: '🟦 羅得B 區', 
-                        keywords: ['羅得B', '羅得 B'], 
-                        style: 'border-blue-500/50 bg-blue-900/10 text-blue-300',
-                        thStyle: 'bg-blue-950/80 border-blue-900/50 text-blue-200'
-                    },
-                    { 
-                        id: 'zone-kaido', 
-                        title: '🟩 Kaido 區', 
-                        keywords: ['Kaido', 'KAIDO', 'kaido'], 
-                        style: 'border-emerald-500/50 bg-emerald-900/10 text-emerald-300',
-                        thStyle: 'bg-emerald-950/80 border-emerald-900/50 text-emerald-200'
-                    },
-                    { 
-                        id: 'zone-xiandao', 
-                        title: '🟧 先導 區', 
-                        keywords: ['先導'], 
-                        style: 'border-amber-500/50 bg-amber-900/10 text-amber-300',
-                        thStyle: 'bg-amber-950/80 border-amber-900/50 text-amber-200'
-                    },
-                    { 
-                        id: 'zone-rewinder', 
-                        title: '🟪 覆捲機 區', 
-                        keywords: ['覆捲機', 'RW'], 
-                        style: 'border-purple-500/50 bg-purple-900/10 text-purple-300',
-                        thStyle: 'bg-purple-950/80 border-purple-900/50 text-purple-200'
-                    },
-                    { 
-                        id: 'zone-other', 
-                        title: '⬜ 通用與其他機台', 
-                        keywords: [], 
-                        style: 'border-slate-600/50 bg-slate-800/20 text-slate-300',
-                        thStyle: 'bg-slate-950/80 border-slate-700/50 text-slate-300'
-                    }
-                ];
+                let split = Math.ceil(filteredMachines.length / 2);
+                while (split < filteredMachines.length) {
+                  const m = filteredMachines[split];
+                  const group = REWINDER_GROUPS.find(g => g.members.includes(m.name));
+                  if (!group) break;
+                  const groupMachinesInView = filteredMachines.filter(item => group.members.includes(item.name));
+                  if (groupMachinesInView[0].id === m.id) break;
+                  split++;
+                }
 
-                const groupedMachines = {};
-                boardZones.forEach(z => groupedMachines[z.id] = []);
+                const leftMachines = filteredMachines.slice(0, split);
+                const rightMachines = filteredMachines.slice(split);
 
-                filteredMachines.forEach(machine => {
-                    const matchedZone = boardZones.find(zone => 
-                        zone.keywords.length > 0 && (
-                            zone.keywords.some(kw => machine.name.includes(kw)) ||
-                            (machine.type && zone.keywords.some(kw => machine.type.includes(kw)))
-                        )
-                    );
-                    const zoneId = matchedZone ? matchedZone.id : 'zone-other';
-                    groupedMachines[zoneId].push(machine);
-                });
-
-                const renderTable = (subMachines, zone) => {
-                  if (subMachines.length === 0) return null;
-                  return (
-                    <div key={zone.id} className={`break-inside-avoid mb-4 flex flex-col border-2 rounded-xl overflow-hidden shadow-md ${zone.style}`}>
-                      <div className={`px-3 py-2 font-bold flex items-center justify-between border-b ${zone.thStyle}`}>
-                        <div className="flex items-center gap-2">
-                          {zone.title}
-                          <span className="text-[10px] font-normal opacity-80 border border-current px-1.5 py-0.5 rounded-full">
-                            共 {subMachines.length} 台
-                          </span>
-                        </div>
-                      </div>
-                      <div className="overflow-x-auto bg-slate-950/40">
-                        <table className="w-full text-left border-collapse">
-                          <thead className={`text-[11px] border-b ${zone.thStyle}`}>
+                const renderTable = (subMachines) => (
+                  <div className="flex-1 overflow-hidden border border-slate-800/80 rounded-lg bg-slate-950/40 flex flex-col">
+                    <div className="overflow-y-auto flex-1">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="bg-slate-950 text-slate-300 text-[11px] sticky top-0 z-10 shadow border-b border-slate-800">
+                          <tr>
+                            <th className="p-1 font-semibold w-8 text-center" title="整列拖曳/排序">順序</th>
+                            <th className="p-1.5 font-semibold w-16">類型</th>
+                            <th className="p-1.5 font-semibold w-14">機台</th>
+                            <th className="p-1.5 font-semibold">操作員</th>
+                            <th className="p-1.5 font-semibold">預備員</th>
+                            <th className="p-1.5 font-semibold w-24">機況</th>
+                            <th className="p-1.5 font-semibold w-24">料況</th>
+                            {userRole === 'admin' && (
+                              <th className="p-1.5 font-semibold w-12 text-center">管理</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-[11px]">
+                          {subMachines.length === 0 ? (
                             <tr>
-                              <th className="p-1 font-semibold w-8 text-center" title="整列拖曳/排序">順序</th>
-                              <th className="p-1.5 font-semibold w-16">類型</th>
-                              <th className="p-1.5 font-semibold w-14">機台</th>
-                              <th className="p-1.5 font-semibold">操作員</th>
-                              <th className="p-1.5 font-semibold">預備員</th>
-                              <th className="p-1.5 font-semibold w-24">機況</th>
-                              <th className="p-1.5 font-semibold w-24">料況</th>
-                              {userRole === 'admin' && (
-                                <th className="p-1.5 font-semibold w-12 text-center">管理</th>
-                              )}
+                              <td colSpan={userRole === 'admin' ? 8 : 7} className="text-center py-6 text-slate-500">
+                                無機台資料
+                              </td>
                             </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-800/60 text-[11px]">
-                            {subMachines.map((machine) => {
+                          ) : (
+                            subMachines.map((machine) => {
                               const mOpt = mStatusOptions.find(o => o.label === machine.mStatus) || mStatusOptions[0] || { color: "bg-slate-800 text-slate-300 border-slate-700", badge: "bg-slate-400" };
                               const matOpt = matStatusOptions.find(o => o.label === machine.matStatus);
 
@@ -2729,17 +2687,18 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
 
                                 </tr>
                               );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                            })
+                          )}
+                        </tbody>
+                      </table>
                     </div>
-                  );
-                };
+                  </div>
+                );
 
                 return (
-                  <div className="flex-1 overflow-y-auto mt-2 columns-1 xl:columns-2 gap-4 h-full pb-10 pr-1">
-                    {boardZones.map(zone => renderTable(groupedMachines[zone.id], zone))}
+                  <div className="flex-1 overflow-hidden mt-2 grid grid-cols-1 xl:grid-cols-2 gap-3 h-full">
+                    {renderTable(leftMachines)}
+                    {renderTable(rightMachines)}
                   </div>
                 );
               })()}
