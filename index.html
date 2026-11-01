@@ -445,7 +445,20 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
       const [pwForm, setPwForm] = useState({ oldPw: "", newPw: "", confirmPw: "" });
       const [pwError, setPwError] = useState("");
 
+      const [resignedEmployees, setResignedEmployees] = useState(() => {
+        const saved = localStorage.getItem("mfg_board_resigned_v1");
+        return saved ? JSON.parse(saved) : [];
+      });
+      const [showResignModal, setShowResignModal] = useState(false);
+      const [resignForm, setResignForm] = useState({ name: "", date: todayStr });
+
       const [confirmDialog, setConfirmDialog] = useState({ open: false, title: "", message: "", onConfirm: null });
+
+      const allEmployees = useMemo(() => {
+        const set = new Set();
+        Object.values(squadRosters).forEach(list => list.forEach(name => set.add(name)));
+        return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-TW'));
+      }, [squadRosters]);
 
       // Filters & Search
       const [filterType, setFilterType] = useState("ALL");
@@ -517,7 +530,8 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         localStorage.setItem("mfg_board_schedules_map_v1", JSON.stringify(schedulesMap));
         localStorage.setItem("mfg_board_maint_logs_v1", JSON.stringify(maintenanceLogs));
         localStorage.setItem("mfg_board_maint_tags_v1", JSON.stringify(maintIssueTags));
-      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap, schedulesMap, maintenanceLogs, maintIssueTags]);
+        localStorage.setItem("mfg_board_resigned_v1", JSON.stringify(resignedEmployees));
+      }, [machines, machineTypes, mStatusOptions, matStatusOptions, skillGroups, attendanceMap, schedulesMap, maintenanceLogs, maintIssueTags, resignedEmployees]);
 
       useEffect(() => {
         if (!selectedDate) return;
@@ -549,18 +563,24 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
 
         const dutyMembers = squadRosters[dutySquad] || [];
         dutyMembers.forEach(person => {
+          const resignation = resignedEmployees.find(r => r.name === person);
+          if (resignation && selectedDate >= resignation.resignDate) return;
+
           const sVal = getPersonScheduledShift(dutySquad, person);
           duty.push({ name: person, squad: dutySquad, schedShift: sVal || selectedShiftTime });
         });
 
         const supportMembers = squadRosters[targetSupportSquad] || [];
         supportMembers.forEach(person => {
+          const resignation = resignedEmployees.find(r => r.name === person);
+          if (resignation && selectedDate >= resignation.resignDate) return;
+
           const sVal = getPersonScheduledShift(targetSupportSquad, person);
           support.push({ name: person, squad: targetSupportSquad, schedShift: sVal });
         });
 
         return { duty, support, dutySquad, supportSquad: targetSupportSquad };
-      }, [selectedDate, selectedShiftTime, currentShift, squadRosters, scheduledShifts]);
+      }, [selectedDate, selectedShiftTime, currentShift, squadRosters, scheduledShifts, resignedEmployees]);
 
       const currentDutyPool = useMemo(() => categorizedPersonnel.duty.map(p => p.name), [categorizedPersonnel]);
       const currentSupportPool = useMemo(() => categorizedPersonnel.support.map(p => p.name), [categorizedPersonnel]);
@@ -649,6 +669,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 if (cloudState.schedulesMap) setSchedulesMap(cloudState.schedulesMap);
                 if (cloudState.maintenanceLogs) setMaintenanceLogs(cloudState.maintenanceLogs);
                 if (cloudState.maintIssueTags) setMaintIssueTags(cloudState.maintIssueTags);
+                if (cloudState.resignedEmployees) setResignedEmployees(cloudState.resignedEmployees);
                 if (cloudState.adminPassword) {
                   setAdminPassword(cloudState.adminPassword);
                   localStorage.setItem("mfg_board_admin_pw_v3", cloudState.adminPassword);
@@ -686,6 +707,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                     if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
                     if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
                     if (remote.maintenanceLogs) setMaintenanceLogs(remote.maintenanceLogs);
+                    if (remote.resignedEmployees) setResignedEmployees(remote.resignedEmployees);
                     if (remote.adminPassword && remote.adminPassword !== adminPassword) {
                       setAdminPassword(remote.adminPassword);
                       localStorage.setItem("mfg_board_admin_pw_v3", remote.adminPassword);
@@ -727,6 +749,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
                 if (remote.mStatusOptions) setMStatusOptions(remote.mStatusOptions);
                 if (remote.matStatusOptions) setMatStatusOptions(remote.matStatusOptions);
                 if (remote.maintenanceLogs) setMaintenanceLogs(remote.maintenanceLogs);
+                if (remote.resignedEmployees) setResignedEmployees(remote.resignedEmployees);
                 if (remote.adminPassword && remote.adminPassword !== adminPassword) {
                   setAdminPassword(remote.adminPassword);
                   localStorage.setItem("mfg_board_admin_pw_v3", remote.adminPassword);
@@ -849,6 +872,7 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
             maintenanceLogs,
             maintIssueTags,
             adminPassword,
+            resignedEmployees,
             ...updatedFields,
             schedulesMap: newSchedulesMap
           };
@@ -1768,6 +1792,29 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
         showNotice("機台顯示顏色已更新", "success");
       };
 
+      const handleAddResignation = (e) => {
+        e.preventDefault();
+        if (!resignForm.name || !resignForm.date) return;
+        const existing = resignedEmployees.find(r => r.name === resignForm.name);
+        let updated;
+        if (existing) {
+          updated = resignedEmployees.map(r => r.name === resignForm.name ? { ...r, resignDate: resignForm.date } : r);
+        } else {
+          updated = [...resignedEmployees, { name: resignForm.name, resignDate: resignForm.date }];
+        }
+        setResignedEmployees(updated);
+        pushToSupabase({ resignedEmployees: updated });
+        setResignForm({ name: "", date: todayStr });
+        showNotice(`已設定 [${resignForm.name}] 的離職生效日為 ${resignForm.date}`, "success");
+      };
+
+      const handleRemoveResignation = (name) => {
+        const updated = resignedEmployees.filter(r => r.name !== name);
+        setResignedEmployees(updated);
+        pushToSupabase({ resignedEmployees: updated });
+        showNotice(`已取消 [${name}] 的離職設定`, "info");
+      };
+
       if (!userRole) {
         return (
           <div className="min-h-screen bg-industrial-950 flex items-center justify-center p-4">
@@ -1975,6 +2022,12 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                       className="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition shadow"
                     >
                       <IconClipboard /> 匯出排班概況
+                    </button>
+                    <button
+                      onClick={() => setShowResignModal(true)}
+                      className="bg-rose-700 hover:bg-rose-600 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition shadow"
+                    >
+                      👋 員工離職
                     </button>
                     <button 
                       onClick={handleResetBoard}
@@ -4212,6 +4265,92 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     </button>
                   </div>
                 </form>
+              </div>
+            </div>
+          )}
+
+          {/* Employee Resignation Modal */}
+          {showResignModal && (
+            <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-lg w-full p-5 shadow-2xl flex flex-col h-[80vh] max-h-[600px]">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                    👋 員工離職管理
+                  </h3>
+                  <button onClick={() => setShowResignModal(false)} className="text-slate-400 hover:text-white font-bold">
+                    ✕
+                  </button>
+                </div>
+
+                <div className="py-4 shrink-0 border-b border-slate-800">
+                  <form onSubmit={handleAddResignation} className="flex flex-col sm:flex-row items-end gap-3">
+                    <div className="flex-1 w-full">
+                      <label className="block text-xs font-bold text-slate-300 mb-1">選擇員工</label>
+                      <select
+                        required
+                        value={resignForm.name}
+                        onChange={e => setResignForm({ ...resignForm, name: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 text-slate-100 text-xs px-2.5 py-2 rounded focus:outline-none"
+                      >
+                        <option value="">請選擇員工...</option>
+                        {allEmployees.map(emp => (
+                          <option key={emp} value={emp}>{emp}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex-1 w-full">
+                      <label className="block text-xs font-bold text-slate-300 mb-1">離職生效日</label>
+                      <input
+                        type="date"
+                        required
+                        value={resignForm.date}
+                        onChange={e => setResignForm({ ...resignForm, date: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 text-slate-100 text-xs px-2.5 py-2 rounded focus:outline-none font-mono"
+                      />
+                    </div>
+                    <button type="submit" className="bg-rose-700 hover:bg-rose-600 text-white text-xs font-bold px-4 py-2 rounded shadow shrink-0 w-full sm:w-auto">
+                      設定離職
+                    </button>
+                  </form>
+                  <p className="text-[10px] text-slate-400 mt-2">
+                    設定後，該員工在「生效日（含）之後」的所有排班與指派清單中將自動隱藏，不影響歷史紀錄。
+                  </p>
+                </div>
+
+                <div className="flex-1 overflow-y-auto py-3 min-h-0">
+                  <h4 className="text-xs font-bold text-slate-300 mb-2">已設定離職名單</h4>
+                  <div className="space-y-2 pr-1">
+                    {resignedEmployees.length === 0 ? (
+                      <div className="text-center py-6 text-slate-500 text-xs border border-slate-800 rounded bg-slate-950/50">
+                        尚無任何離職紀錄
+                      </div>
+                    ) : (
+                      resignedEmployees.map(r => (
+                        <div key={r.name} className="flex items-center justify-between p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                          <div>
+                            <div className="text-sm font-bold text-slate-200">{r.name}</div>
+                            <div className="text-xs text-rose-400 mt-0.5">生效日: {r.resignDate}</div>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveResignation(r.name)}
+                            className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1 rounded text-xs transition border border-slate-700 hover:border-slate-500"
+                          >
+                            復職 / 刪除紀錄
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-800 flex justify-end shrink-0">
+                  <button
+                    onClick={() => setShowResignModal(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded border border-slate-700"
+                  >
+                    關閉
+                  </button>
+                </div>
               </div>
             </div>
           )}
