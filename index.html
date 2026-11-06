@@ -1276,16 +1276,47 @@ CREATE POLICY "Public Full Access" ON public.mfg_board FOR ALL USING (true) WITH
         setConfirmDialog({
           open: true,
           title: "重置看板確認",
-          message: "確定要重置看板嗎？所有機台的「操作員」與「預備員」將清空，「機況」與「料況」皆將保留不變。",
+          message: "確定要重置看板嗎？所有機台的「操作員」與「預備員」將清空，並且「機況」與「料況」將自動同步為上一班的紀錄。",
           onConfirm: () => {
-            const updated = machines.map(m => ({
-              ...m,
-              operator: "",
-              backup: ""
-            }));
+            // 自動計算上一班的日期與班別
+            let prevDateStr = selectedDate;
+            let prevShiftTime = "夜";
+            if (selectedShiftTime === "日") {
+               prevShiftTime = "夜";
+               prevDateStr = getOffsetDateStr(selectedDate, -1);
+            } else {
+               prevShiftTime = "日";
+            }
+            
+            const prevShiftKey = `${prevDateStr}_${prevShiftTime}`;
+            const prevShiftData = schedulesMap[prevShiftKey];
+            const prevMachines = prevShiftData ? prevShiftData.machines : null;
+
+            const updated = machines.map(m => {
+              let nextMStatus = m.mStatus;
+              let nextMatStatus = m.matStatus;
+              
+              // 若有上一班的紀錄，則讀取上一班的機況與料況
+              if (prevMachines) {
+                const prevM = prevMachines.find(pm => pm.id === m.id || pm.name === m.name);
+                if (prevM) {
+                   nextMStatus = prevM.mStatus || "正常運轉";
+                   nextMatStatus = prevM.matStatus || "";
+                }
+              }
+
+              return {
+                ...m,
+                operator: "",
+                backup: "",
+                mStatus: nextMStatus,
+                matStatus: nextMatStatus
+              };
+            });
+            
             setMachines(updated);
             pushToSupabase({ machines: updated });
-            showNotice("看板已重置！操作員與預備員已清空，機況與料況完整保留。", "success");
+            showNotice("看板已重置！人員配置已清空，機況與料況已同步至上一班。", "success");
           }
         });
       };
@@ -2032,7 +2063,7 @@ ${assignedList.length > 0 ? assignedList.join("\n") : " (目前尚未派工)"}
                     <button 
                       onClick={handleResetBoard}
                       className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-md text-xs font-medium flex items-center transition"
-                      title="重置操作員與預備員"
+                      title="重置操作員與預備員，並同步上一班機況與料況"
                     >
                       <IconRefresh /> 重置看板
                     </button>
